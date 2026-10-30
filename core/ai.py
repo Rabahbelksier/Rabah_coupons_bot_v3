@@ -2126,6 +2126,33 @@ def _normalized_shipping_country_mentions(country, country_mentions):
     return normalized_mentions
 
 
+def _shipping_text_contains_country_mention(text, mention):
+    searchable_text = f" {_normalize_shipping_evidence_text(text)} "
+    if f" {mention} " in searchable_text:
+        return True
+
+    country_words = mention.split()
+    if not country_words or not re.search(r"[\u0600-\u06ff]", country_words[0]):
+        return False
+
+    prefixes = ("ل", "ب", "ك", "و", "ف", "ول", "وب", "وك", "فل", "فب", "فك")
+    first_word = country_words[0]
+    remaining_words = country_words[1:]
+    for prefix in prefixes:
+        first_word_variants = [f"{prefix}{first_word}"]
+        # The Arabic l-prefix contracts with a country name beginning with
+        # the definite article, as in "للجزائر".
+        if prefix in {"ل", "ول", "فل"} and first_word.startswith("ال"):
+            first_word_variants.append(f"{prefix}{first_word[1:]}")
+        for prefixed_first_word in first_word_variants:
+            prefixed_mention = " ".join(
+                [prefixed_first_word, *remaining_words]
+            )
+            if f" {prefixed_mention} " in searchable_text:
+                return True
+    return False
+
+
 def _shipping_country_is_explicit(country, country_mentions, source_lines):
     normalized_mentions = _normalized_shipping_country_mentions(
         country,
@@ -2133,12 +2160,11 @@ def _shipping_country_is_explicit(country, country_mentions, source_lines):
     )
     if not normalized_mentions:
         return False
-    normalized_source_text = _normalize_shipping_evidence_text(
-        " ".join(source_lines)
-    )
-    searchable_text = f" {normalized_source_text} "
     return all(
-        f" {mention} " in searchable_text
+        _shipping_text_contains_country_mention(
+            " ".join(source_lines),
+            mention,
+        )
         for mention in normalized_mentions
     )
 
@@ -2157,11 +2183,8 @@ def _shipping_country_mention_line_numbers(
 
     line_numbers = []
     for line_number, source_line in enumerate(source_lines, start=1):
-        normalized_line = (
-            f" {_normalize_shipping_evidence_text(source_line)} "
-        )
         if any(
-            f" {mention} " in normalized_line
+            _shipping_text_contains_country_mention(source_line, mention)
             for mention in normalized_mentions
         ):
             line_numbers.append(line_number)
@@ -2283,7 +2306,10 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
   إذا لم تظهر أي دولة صراحةً في المنشور، أعد null.
 - shipping_country_mentions: قائمة بأسماء الدول كما كُتبت حرفيًا في المنشور،
   وبالترتيب نفسه لقيم shipping_country. إذا لم تظهر دولة صراحةً، أعد قائمة
-  فارغة. لا يشترط أن تكون الدولة في سطر الشحن أو بجوار عبارة شحن.
+  فارغة. لا يشترط أن تكون الدولة في سطر الشحن أو بجوار عبارة شحن. انتبه إلى
+  حروف الجر العربية كاللام والباء والكاف إذا التصقت باسم الدولة؛ افصلها عند
+  تحديد اسم الدولة، واحتفظ بصياغة الاسم الظاهرة في المنشور عند إرجاع
+  shipping_country_mentions.
 - link_sections: مجموعات أسطر الروابط. لكل رابط أعد line_numbers تشمل سطر
   الوصف أو العنوان وكل الأسطر التابعة له وسطر الرابط نفسه.
 - لا تضع أسطر العنوان والسعر في coupon_line_numbers إلا إذا كانت تتحدث

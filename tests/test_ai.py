@@ -2376,6 +2376,33 @@ class AiParsingTests(unittest.TestCase):
         self.assertEqual(result["shipping_line_numbers"], [1])
 
     @patch("core.ai._call_gemini")
+    def test_matches_country_names_with_attached_arabic_prepositions(
+        self,
+        call_gemini,
+    ):
+        cases = [
+            ("عرض جديد موجه لفرنسا بسعر 100$", "France", "فرنسا"),
+            ("نسخة متاحة بالجزائر بسعر 100$", "Algeria", "الجزائر"),
+            ("نسخة مخصصة للجزائر بسعر 100$", "Algeria", "الجزائر"),
+        ]
+
+        for text, country, mention in cases:
+            with self.subTest(country=country, text=text):
+                call_gemini.return_value = {
+                    "is_offer": True,
+                    "title": "منتج",
+                    "discounted_price": 100,
+                    "shipping_line_numbers": [],
+                    "shipping_country": country,
+                    "shipping_country_mentions": [mention],
+                }
+
+                result = analyze_channel_post(text)
+
+                self.assertEqual(result["shipping_country"], country)
+                self.assertEqual(result["shipping_line_numbers"], [1])
+
+    @patch("core.ai._call_gemini")
     def test_rejects_country_not_mentioned_anywhere_in_post(self, call_gemini):
         call_gemini.return_value = {
             "is_offer": True,
