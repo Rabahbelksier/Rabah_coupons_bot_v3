@@ -2315,6 +2315,7 @@ class AiParsingTests(unittest.TestCase):
             "currency": "$",
             "shipping_line_numbers": [2],
             "shipping_country": "Algeria",
+            "shipping_country_mentions": ["الجزائر"],
         }
 
         result = analyze_channel_post(
@@ -2322,6 +2323,77 @@ class AiParsingTests(unittest.TestCase):
         )
 
         self.assertEqual(result["shipping_country"], "Algeria")
+        self.assertEqual(result["shipping_line_numbers"], [2])
+
+    @patch("core.ai._call_gemini")
+    def test_does_not_classify_generic_shipping_as_a_country(self, call_gemini):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "هاتف",
+            "discounted_price": 100,
+            "shipping_line_numbers": [2],
+            "shipping_country": None,
+            "shipping_country_mentions": [],
+        }
+
+        result = analyze_channel_post("هاتف بسعر 100$\nالشحن متوفر")
+
+        self.assertIsNone(result.get("shipping_country"))
+        self.assertEqual(result["shipping_line_numbers"], [])
+
+    @patch("core.ai._call_gemini")
+    def test_requires_country_mention_inside_shipping_lines(self, call_gemini):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "هاتف نسخة فرنسا",
+            "discounted_price": 100,
+            "shipping_line_numbers": [2],
+            "shipping_country": "France",
+            "shipping_country_mentions": ["فرنسا"],
+        }
+
+        result = analyze_channel_post(
+            "هاتف نسخة فرنسا\nالشحن متوفر دون تحديد دولة"
+        )
+
+        self.assertIsNone(result.get("shipping_country"))
+        self.assertEqual(result["shipping_line_numbers"], [])
+
+    @patch("core.ai._call_gemini")
+    def test_accepts_country_on_a_separate_referenced_shipping_line(
+        self,
+        call_gemini,
+    ):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "هاتف",
+            "discounted_price": 100,
+            "shipping_line_numbers": [2, 3],
+            "shipping_country": "Algeria",
+            "shipping_country_mentions": ["الجزائر"],
+        }
+
+        result = analyze_channel_post(
+            "هاتف بسعر 100$\nالشحن متوفر إلى الدول التالية:\nالجزائر"
+        )
+
+        self.assertEqual(result["shipping_country"], "Algeria")
+        self.assertEqual(result["shipping_line_numbers"], [2, 3])
+
+    @patch("core.ai._call_gemini")
+    def test_accepts_an_explicit_english_shipping_destination(self, call_gemini):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "Phone",
+            "discounted_price": 100,
+            "shipping_line_numbers": [2],
+            "shipping_country": "France",
+            "shipping_country_mentions": ["France"],
+        }
+
+        result = analyze_channel_post("Phone offer\nShips to France")
+
+        self.assertEqual(result["shipping_country"], "France")
         self.assertEqual(result["shipping_line_numbers"], [2])
 
     @patch("core.ai._call_gemini")

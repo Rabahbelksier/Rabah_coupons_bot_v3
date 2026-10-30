@@ -304,9 +304,13 @@ def _build_channel_content(text, analysis, urls, replacements):
         source_lines,
         analysis.get("coupon_line_numbers", []),
     )
-    shipping_lines = _lines_for_numbers(
-        source_lines,
-        analysis.get("shipping_line_numbers", []),
+    shipping_lines = (
+        _lines_for_numbers(
+            source_lines,
+            analysis.get("shipping_line_numbers", []),
+        )
+        if analysis.get("shipping_country")
+        else []
     )
     link_sections = _build_link_sections(text, analysis, urls)
 

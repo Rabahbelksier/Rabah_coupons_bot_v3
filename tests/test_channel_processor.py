@@ -329,6 +329,59 @@ class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://t.me/rabahcopons/7366", content)
         self.assertNotIn("s.click.aliexpress.com", content)
 
+    def test_does_not_add_shipping_lines_without_a_named_country(self):
+        text = (
+            "منتج ممتاز بسعر 12.50$\n"
+            "شحن مجاني\n"
+            "رابط المنتج:\n"
+            "https://s.click.aliexpress.com/e/_c3tbmYUP\n"
+        )
+        content = _build_channel_content(
+            text,
+            {
+                "title": "منتج ممتاز",
+                "price": 12.5,
+                "currency": "$",
+                "shipping_line_numbers": [2],
+                "coupon_line_numbers": [],
+                "link_sections": [{"line_numbers": [3, 4]}],
+            },
+            ["https://s.click.aliexpress.com/e/_c3tbmYUP"],
+            {
+                "https://s.click.aliexpress.com/e/_c3tbmYUP":
+                    "https://affiliate/product",
+            },
+        )
+
+        self.assertNotIn("شحن مجاني", content)
+
+    def test_keeps_shipping_lines_when_a_country_is_known(self):
+        text = (
+            "منتج ممتاز بسعر 12.50$\n"
+            "الشحن متوفر إلى الجزائر\n"
+            "رابط المنتج:\n"
+            "https://s.click.aliexpress.com/e/_c3tbmYUP\n"
+        )
+        content = _build_channel_content(
+            text,
+            {
+                "title": "منتج ممتاز",
+                "price": 12.5,
+                "currency": "$",
+                "shipping_country": "Algeria",
+                "shipping_line_numbers": [2],
+                "coupon_line_numbers": [],
+                "link_sections": [{"line_numbers": [3, 4]}],
+            },
+            ["https://s.click.aliexpress.com/e/_c3tbmYUP"],
+            {
+                "https://s.click.aliexpress.com/e/_c3tbmYUP":
+                    "https://affiliate/product",
+            },
+        )
+
+        self.assertIn("الشحن متوفر إلى الجزائر", content)
+
 
 class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
     def _batch_candidate(self, post_id):

@@ -2080,6 +2080,81 @@ def _normalize_shipping_country(value):
     return country[:200] or None
 
 
+def _normalize_shipping_evidence_text(value):
+    text = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+    text = text.translate(str.maketrans("ى", "ي"))
+    return " ".join(re.findall(r"[\w\u0600-\u06ff]+", text))
+
+
+_SHIPPING_CONTEXT_PATTERN = re.compile(
+    r"\b(?:ship(?:s|ped|ping)?|deliver(?:s|ed|ing|y|ies)?|"
+    r"shipment|send(?:s|ing)?|sent|dispatch(?:es|ed|ing)?|"
+    r"livraison(?:s)?|livrer|livre|expedition|expedier|"
+    r"envoi|envoyer|envoye)\b"
+    r"|(?:الشحن|شحن|تشحن|يشحن|يوصل|التوصيل|توصيل)"
+)
+
+
+def _shipping_country_is_explicit(
+    country,
+    country_mentions,
+    source_lines,
+    shipping_line_numbers,
+):
+    if not country or not shipping_line_numbers:
+        return False
+
+    country_parts = [
+        part.strip()
+        for part in re.split(r"[,،]", country)
+        if part.strip()
+    ]
+    if not country_parts:
+        return False
+
+    if isinstance(country_mentions, str):
+        country_mentions = [country_mentions]
+    if not isinstance(country_mentions, list):
+        country_mentions = []
+    mentions = [
+        str(mention).strip()
+        for mention in country_mentions
+        if str(mention).strip()
+    ]
+    # Older provider responses can still be accepted when their canonical
+    # country name is literally present in the referenced source lines.
+    if not mentions:
+        mentions = country_parts
+    if len(mentions) != len(country_parts):
+        return False
+    normalized_mentions = [
+        _normalize_shipping_evidence_text(mention)
+        for mention in mentions
+    ]
+    if any(not mention for mention in normalized_mentions):
+        return False
+
+    shipping_text = " ".join(
+        source_lines[line_number - 1]
+        for line_number in shipping_line_numbers
+        if 1 <= line_number <= len(source_lines)
+    )
+    normalized_shipping_text = _normalize_shipping_evidence_text(shipping_text)
+    if not _SHIPPING_CONTEXT_PATTERN.search(normalized_shipping_text):
+        return False
+
+    searchable_text = f" {normalized_shipping_text} "
+    return all(
+        f" {mention} " in searchable_text
+        for mention in normalized_mentions
+    )
+
+
 def _normalize_offer_type(value):
     """Normalize the channel-offer classification returned by an AI provider."""
     normalized = str(value or "").casefold().strip()
@@ -2185,10 +2260,16 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
 - When several prices exist, choose the final discounted product price,
   not the old price, coupon threshold, shipping cost, or percentage.
 - coupon_line_numbers: أرقام أسطر القسائم أو الكوبونات أو الرموز أو شروطها.
-- shipping_line_numbers: أرقام أسطر توفر الشحن أو التوصيل إلى بلد أو مجموعة
-  بلدان، وإلا أعد قائمة فارغة.
-- shipping_country: اسم الدولة أو الدول المذكورة في أسطر الشحن فقط، بصيغة
-  موحدة باللغة الإنجليزية ومفصولة بفواصل، أو null.
+- shipping_line_numbers: أرقام أسطر الشحن أو التوصيل التي تذكر صراحةً دولة
+  واحدة على الأقل. إذا لم تذكر أي دولة صراحةً، أعد قائمة فارغة ولا تدرج أسطر
+  الشحن العامة مثل "شحن مجاني" في قالب المنشور.
+- shipping_country: اسم الدولة أو الدول المذكورة صراحةً في أسطر الشحن فقط،
+  بصيغة موحدة باللغة الإنجليزية ومفصولة بفواصل. لا تستنتج دولة من السياق أو
+  من ذكرها خارج سياق الشحن. إذا لم تظهر دولة صراحةً، أعد null.
+- shipping_country_mentions: قائمة بأسماء الدول كما كُتبت حرفيًا في أسطر
+  الشحن نفسها، وبالترتيب نفسه لقيم shipping_country. إذا لم تظهر دولة صراحةً،
+  أعد قائمة فارغة. يجب أن يتضمن shipping_line_numbers أسطر عبارة الشحن
+  وأسطر أسماء الدول المرتبطة بها، حتى عندما تكون في أسطر منفصلة.
 - link_sections: مجموعات أسطر الروابط. لكل رابط أعد line_numbers تشمل سطر
   الوصف أو العنوان وكل الأسطر التابعة له وسطر الرابط نفسه.
 - لا تضع أسطر العنوان والسعر في coupon_line_numbers إلا إذا كانت تتحدث
@@ -2290,14 +2371,21 @@ def _normalize_channel_analysis(result, text, ai_provider=None):
             _special_category_from_title(normalized.get("title"))
             or "other"
         )
-    if "shipping_line_numbers" in result:
-        normalized["shipping_line_numbers"] = _normalize_line_numbers(
-            result.get("shipping_line_numbers"),
-            len(source_lines),
-        )
+    shipping_line_numbers = _normalize_line_numbers(
+        result.get("shipping_line_numbers"),
+        len(source_lines),
+    )
     shipping_country = _normalize_shipping_country(result.get("shipping_country"))
-    if shipping_country and normalized.get("shipping_line_numbers"):
+    if _shipping_country_is_explicit(
+        shipping_country,
+        result.get("shipping_country_mentions"),
+        source_lines,
+        shipping_line_numbers,
+    ):
         normalized["shipping_country"] = shipping_country
+        normalized["shipping_line_numbers"] = shipping_line_numbers
+    elif "shipping_line_numbers" in result or shipping_country:
+        normalized["shipping_line_numbers"] = []
     return ChannelAnalysis(normalized, ai_provider=ai_provider)
 
 
@@ -2609,6 +2697,7 @@ def _channel_analysis_prompt(posts):
 "bundle_quantity": null, "price_line_numbers": [2],
 "category": "phones", "currency": "$", "coupon_line_numbers": [5, 6],
 "shipping_line_numbers": [3], "shipping_country": "Algeria",
+"shipping_country_mentions": ["الجزائر"],
 "link_sections": [{{"line_numbers": [8, 9]}}]}}]}}
 
 أعد عنصرًا واحدًا بالضبط لكل معرّف، وحافظ على المعرّف كما هو دون حذف أو تكرار.
@@ -2728,7 +2817,7 @@ def analyze_channel_post(text, request_kind="channel"):
 "clean_title": null, "discounted_price": 12.5,
 "category": "phones", "currency": "$",
 "coupon_line_numbers": [5, 6], "shipping_line_numbers": [3],
-"shipping_country": "Algeria",
+"shipping_country": "Algeria", "shipping_country_mentions": ["الجزائر"],
 "link_sections": [{{"line_numbers": [8, 9]}}]}}
 
 أسطر المنشور المرقمة:
