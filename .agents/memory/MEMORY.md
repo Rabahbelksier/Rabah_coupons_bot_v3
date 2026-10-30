@@ -1,0 +1,19 @@
+- [Telegram media delivery](telegram-media-delivery.md) — photo captions have a hard size limit; prefer Telegram file IDs over re-fetching remote image URLs.
+- [Gemini quota handling](gemini-quota-handling.md) — model quotas can differ; switch models on 429 instead of retrying one exhausted model indefinitely.
+- [Telethon session exclusivity](telethon-session-exclusivity.md) — one StringSession cannot safely serve workers from different IP addresses.
+- [Python package setup](python-package-setup.md) — package installation can rewrite dependency files and workspace state; re-check the diff before finalizing code changes.
+- [AI intent composition](ai-intent-composition.md) — preserve independent filters; retry direct Gemini phrase selection only when no specific cached term survives.
+- [Channel-offer category keys](channel-offer-category-keys.md) — keep AI's Bluetooth and smart-watch labels in the internal category field; preserve AliExpress taxonomy separately.
+- [Webhook startup readiness](webhook-startup-readiness.md) — initialize the Telegram application before serving webhooks; keep optional services off the first-response path.
+- [AI provider failover state](ai-provider-failover-state.md) — quarantine quota/config failures only; keep transient failures request-scoped and preserve typed exhaustion across requests.
+- [Natural-language search entry](natural-language-search-entry.md) — the AI button is guidance only; valid search text must not depend on volatile Telegram session state.
+- [AI request priority](ai-request-priority.md) — admit user searches before unstarted channel analysis, but never cancel analysis already in flight.
+- [Provenance column compatibility](provenance-column-compatibility.md) — new source fields need nullable schema migration and legacy read/write fallbacks.
+- [Cloudflare request contract](cloudflare-request-contract.md) — Qwen reasoning controls belong under chat_template_kwargs, not as top-level request fields.
+- [Cloudflare error envelope](cloudflare-request-contract.md) — Cloudflare quota failures may use errors[] code 4006; daily neuron exhaustion resets at midnight UTC.
+- [Telegram source retry state](telegram-source-retry-state.md) — a confirmed missing message needs a terminal status; transport and permission errors must remain retryable.
+- [AI service quota display](ai-service-quota-display.md) — keep quota limits separate from DeepSeek's observed daily counts, which roll over at UTC+1 midnight.
+- [Telegram reply-keyboard routing](telegram-reply-keyboard-native-toggle.md) — invisible markers distinguish taps from typed text; omit persistence flags for Telegram's local hide/restore.
+- [AI quota maintenance](ai-quota-maintenance.md) — background quota maintenance is local-only; provider windows are learned from real responses, never synthetic probes.
+- [Gemini phrase/category caches](gemini-keyword-cache.md) — store title wording; normalize legacy underscores and keep official category alternatives OR.
+- [AI task scoping](ai-provider-task-scoping.md) — separate provider routing and admin switches by task, but preserve shared provider quota and usage state.

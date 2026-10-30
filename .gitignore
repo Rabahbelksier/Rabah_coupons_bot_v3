@@ -1,0 +1,10 @@
+.telegram_session
+.telegram_session_string
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+.env
+venv/
+.env.local
+*.log

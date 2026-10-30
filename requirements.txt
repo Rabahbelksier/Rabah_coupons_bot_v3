@@ -1,0 +1,10 @@
+flask
+requests
+psycopg2-binary
+gunicorn
+beautifulsoup4
+cachetools
+telethon
+qrcode
+python-telegram-bot
+pytest
