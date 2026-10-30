@@ -2091,21 +2091,16 @@ def _normalize_shipping_evidence_text(value):
     return " ".join(re.findall(r"[\w\u0600-\u06ff]+", text))
 
 
-def _shipping_country_is_explicit(
-    country,
-    country_mentions,
-    source_lines,
-):
+def _normalized_shipping_country_mentions(country, country_mentions):
     if not country:
-        return False
-
+        return []
     country_parts = [
         part.strip()
         for part in re.split(r"[,،]", country)
         if part.strip()
     ]
     if not country_parts:
-        return False
+        return []
 
     if isinstance(country_mentions, str):
         country_mentions = [country_mentions]
@@ -2117,18 +2112,27 @@ def _shipping_country_is_explicit(
         if str(mention).strip()
     ]
     # Older provider responses can still be accepted when their canonical
-    # country name is literally present in the referenced source lines.
+    # country name is literally present in the source post.
     if not mentions:
         mentions = country_parts
     if len(mentions) != len(country_parts):
-        return False
+        return []
     normalized_mentions = [
         _normalize_shipping_evidence_text(mention)
         for mention in mentions
     ]
     if any(not mention for mention in normalized_mentions):
-        return False
+        return []
+    return normalized_mentions
 
+
+def _shipping_country_is_explicit(country, country_mentions, source_lines):
+    normalized_mentions = _normalized_shipping_country_mentions(
+        country,
+        country_mentions,
+    )
+    if not normalized_mentions:
+        return False
     normalized_source_text = _normalize_shipping_evidence_text(
         " ".join(source_lines)
     )
@@ -2137,6 +2141,31 @@ def _shipping_country_is_explicit(
         f" {mention} " in searchable_text
         for mention in normalized_mentions
     )
+
+
+def _shipping_country_mention_line_numbers(
+    country,
+    country_mentions,
+    source_lines,
+):
+    normalized_mentions = _normalized_shipping_country_mentions(
+        country,
+        country_mentions,
+    )
+    if not normalized_mentions:
+        return []
+
+    line_numbers = []
+    for line_number, source_line in enumerate(source_lines, start=1):
+        normalized_line = (
+            f" {_normalize_shipping_evidence_text(source_line)} "
+        )
+        if any(
+            f" {mention} " in normalized_line
+            for mention in normalized_mentions
+        ):
+            line_numbers.append(line_number)
+    return line_numbers
 
 
 def _normalize_offer_type(value):
@@ -2244,9 +2273,10 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
 - When several prices exist, choose the final discounted product price,
   not the old price, coupon threshold, shipping cost, or percentage.
 - coupon_line_numbers: أرقام أسطر القسائم أو الكوبونات أو الرموز أو شروطها.
-- shipping_line_numbers: أرقام الأسطر التي تتحدث فعليًا عن الشحن أو التوصيل.
-  إذا لم يذكر المنشور أي دولة في أي موضع، أعد قائمة فارغة ولا تدرج أسطر الشحن
-  العامة مثل "شحن مجاني" في قالب المنشور.
+- shipping_line_numbers: أرقام أسطر الشحن أو التوصيل، وأيضًا كل سطر يذكر
+  صراحةً دولة مدرجة في shipping_country. اعتبر سطر الدولة نفسه سطر شحن حتى
+  إن لم يتضمن عبارة شحن. إذا لم يذكر المنشور أي دولة، أعد قائمة فارغة ولا
+  تدرج أسطر الشحن العامة مثل "شحن مجاني" في قالب المنشور.
 - shipping_country: اسم كل دولة مذكورة صراحةً في أي موضع من المنشور، بصيغة
   موحدة باللغة الإنجليزية ومفصولة بفواصل. اعتبر ذكر الدولة دليلًا كافيًا على
   أن المنتج يشحن إليها، حتى إن لم تكن في سياق الشحن. لا تستنتج دولة غير مذكورة.
@@ -2366,7 +2396,14 @@ def _normalize_channel_analysis(result, text, ai_provider=None):
         source_lines,
     ):
         normalized["shipping_country"] = shipping_country
-        normalized["shipping_line_numbers"] = shipping_line_numbers
+        country_line_numbers = _shipping_country_mention_line_numbers(
+            shipping_country,
+            result.get("shipping_country_mentions"),
+            source_lines,
+        )
+        normalized["shipping_line_numbers"] = sorted(
+            set(shipping_line_numbers + country_line_numbers)
+        )
     elif "shipping_line_numbers" in result or shipping_country:
         normalized["shipping_line_numbers"] = []
     return ChannelAnalysis(normalized, ai_provider=ai_provider)

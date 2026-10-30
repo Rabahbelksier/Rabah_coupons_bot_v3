@@ -382,6 +382,32 @@ class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("الشحن متوفر إلى الجزائر", content)
 
+    def test_adds_country_mention_line_to_template_without_shipping_words(self):
+        text = (
+            "نسخة فرنسا متاحة بسعر 12.50$\n"
+            "رابط المنتج:\n"
+            "https://s.click.aliexpress.com/e/_c3tbmYUP\n"
+        )
+        content = _build_channel_content(
+            text,
+            {
+                "title": "منتج ممتاز",
+                "price": 12.5,
+                "currency": "$",
+                "shipping_country": "France",
+                "shipping_line_numbers": [1],
+                "coupon_line_numbers": [],
+                "link_sections": [{"line_numbers": [2, 3]}],
+            },
+            ["https://s.click.aliexpress.com/e/_c3tbmYUP"],
+            {
+                "https://s.click.aliexpress.com/e/_c3tbmYUP":
+                    "https://affiliate/product",
+            },
+        )
+
+        self.assertIn("نسخة فرنسا متاحة", content)
+
 
 class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
     def _batch_candidate(self, post_id):

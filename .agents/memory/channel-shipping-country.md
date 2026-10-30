@@ -7,4 +7,4 @@ If a country is explicitly named anywhere in a Telegram product post, classify t
 
 **Why:** The user explicitly wants country mentions—not shipping-related wording—to be the deciding evidence for shipping-country classification.
 
-**How to apply:** Keep provider instructions and deterministic validation aligned around exact country mentions in the full source post. Preserve existing country normalization and database persistence; include shipping lines only when the post has a validated named country.
+**How to apply:** Keep provider instructions and deterministic validation aligned around exact country mentions in the full source post. Add every source line naming a validated country to the shipping lines rendered in the template, even without shipping wording; preserve existing country normalization and database persistence.

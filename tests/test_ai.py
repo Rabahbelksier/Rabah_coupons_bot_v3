@@ -2357,7 +2357,7 @@ class AiParsingTests(unittest.TestCase):
         )
 
         self.assertEqual(result["shipping_country"], "France")
-        self.assertEqual(result["shipping_line_numbers"], [2])
+        self.assertEqual(result["shipping_line_numbers"], [1, 2])
 
     @patch("core.ai._call_gemini")
     def test_accepts_country_mention_without_shipping_context(self, call_gemini):
@@ -2373,7 +2373,7 @@ class AiParsingTests(unittest.TestCase):
         result = analyze_channel_post("هاتف نسخة فرنسا بسعر 100$")
 
         self.assertEqual(result["shipping_country"], "France")
-        self.assertEqual(result["shipping_line_numbers"], [])
+        self.assertEqual(result["shipping_line_numbers"], [1])
 
     @patch("core.ai._call_gemini")
     def test_rejects_country_not_mentioned_anywhere_in_post(self, call_gemini):
