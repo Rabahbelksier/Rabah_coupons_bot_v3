@@ -2342,7 +2342,7 @@ class AiParsingTests(unittest.TestCase):
         self.assertEqual(result["shipping_line_numbers"], [])
 
     @patch("core.ai._call_gemini")
-    def test_requires_country_mention_inside_shipping_lines(self, call_gemini):
+    def test_accepts_country_mentioned_outside_shipping_lines(self, call_gemini):
         call_gemini.return_value = {
             "is_offer": True,
             "title": "هاتف نسخة فرنسا",
@@ -2355,6 +2355,38 @@ class AiParsingTests(unittest.TestCase):
         result = analyze_channel_post(
             "هاتف نسخة فرنسا\nالشحن متوفر دون تحديد دولة"
         )
+
+        self.assertEqual(result["shipping_country"], "France")
+        self.assertEqual(result["shipping_line_numbers"], [2])
+
+    @patch("core.ai._call_gemini")
+    def test_accepts_country_mention_without_shipping_context(self, call_gemini):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "هاتف نسخة فرنسا",
+            "discounted_price": 100,
+            "shipping_line_numbers": [],
+            "shipping_country": "France",
+            "shipping_country_mentions": ["فرنسا"],
+        }
+
+        result = analyze_channel_post("هاتف نسخة فرنسا بسعر 100$")
+
+        self.assertEqual(result["shipping_country"], "France")
+        self.assertEqual(result["shipping_line_numbers"], [])
+
+    @patch("core.ai._call_gemini")
+    def test_rejects_country_not_mentioned_anywhere_in_post(self, call_gemini):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "هاتف",
+            "discounted_price": 100,
+            "shipping_line_numbers": [2],
+            "shipping_country": "France",
+            "shipping_country_mentions": ["France"],
+        }
+
+        result = analyze_channel_post("هاتف بسعر 100$\nشحن مجاني")
 
         self.assertIsNone(result.get("shipping_country"))
         self.assertEqual(result["shipping_line_numbers"], [])

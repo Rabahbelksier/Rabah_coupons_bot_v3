@@ -17,3 +17,4 @@
 - [AI quota maintenance](ai-quota-maintenance.md) — background quota maintenance is local-only; provider windows are learned from real responses, never synthetic probes.
 - [Gemini phrase/category caches](gemini-keyword-cache.md) — store title wording; normalize legacy underscores and keep official category alternatives OR.
 - [AI task scoping](ai-provider-task-scoping.md) — separate provider routing and admin switches by task, but preserve shared provider quota and usage state.
+- [Channel shipping-country rule](channel-shipping-country.md) — any explicitly named country in a product post qualifies as a destination, even outside shipping wording.

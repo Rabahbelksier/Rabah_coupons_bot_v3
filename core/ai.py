@@ -2091,22 +2091,12 @@ def _normalize_shipping_evidence_text(value):
     return " ".join(re.findall(r"[\w\u0600-\u06ff]+", text))
 
 
-_SHIPPING_CONTEXT_PATTERN = re.compile(
-    r"\b(?:ship(?:s|ped|ping)?|deliver(?:s|ed|ing|y|ies)?|"
-    r"shipment|send(?:s|ing)?|sent|dispatch(?:es|ed|ing)?|"
-    r"livraison(?:s)?|livrer|livre|expedition|expedier|"
-    r"envoi|envoyer|envoye)\b"
-    r"|(?:الشحن|شحن|تشحن|يشحن|يوصل|التوصيل|توصيل)"
-)
-
-
 def _shipping_country_is_explicit(
     country,
     country_mentions,
     source_lines,
-    shipping_line_numbers,
 ):
-    if not country or not shipping_line_numbers:
+    if not country:
         return False
 
     country_parts = [
@@ -2139,16 +2129,10 @@ def _shipping_country_is_explicit(
     if any(not mention for mention in normalized_mentions):
         return False
 
-    shipping_text = " ".join(
-        source_lines[line_number - 1]
-        for line_number in shipping_line_numbers
-        if 1 <= line_number <= len(source_lines)
+    normalized_source_text = _normalize_shipping_evidence_text(
+        " ".join(source_lines)
     )
-    normalized_shipping_text = _normalize_shipping_evidence_text(shipping_text)
-    if not _SHIPPING_CONTEXT_PATTERN.search(normalized_shipping_text):
-        return False
-
-    searchable_text = f" {normalized_shipping_text} "
+    searchable_text = f" {normalized_source_text} "
     return all(
         f" {mention} " in searchable_text
         for mention in normalized_mentions
@@ -2260,16 +2244,16 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
 - When several prices exist, choose the final discounted product price,
   not the old price, coupon threshold, shipping cost, or percentage.
 - coupon_line_numbers: أرقام أسطر القسائم أو الكوبونات أو الرموز أو شروطها.
-- shipping_line_numbers: أرقام أسطر الشحن أو التوصيل التي تذكر صراحةً دولة
-  واحدة على الأقل. إذا لم تذكر أي دولة صراحةً، أعد قائمة فارغة ولا تدرج أسطر
-  الشحن العامة مثل "شحن مجاني" في قالب المنشور.
-- shipping_country: اسم الدولة أو الدول المذكورة صراحةً في أسطر الشحن فقط،
-  بصيغة موحدة باللغة الإنجليزية ومفصولة بفواصل. لا تستنتج دولة من السياق أو
-  من ذكرها خارج سياق الشحن. إذا لم تظهر دولة صراحةً، أعد null.
-- shipping_country_mentions: قائمة بأسماء الدول كما كُتبت حرفيًا في أسطر
-  الشحن نفسها، وبالترتيب نفسه لقيم shipping_country. إذا لم تظهر دولة صراحةً،
-  أعد قائمة فارغة. يجب أن يتضمن shipping_line_numbers أسطر عبارة الشحن
-  وأسطر أسماء الدول المرتبطة بها، حتى عندما تكون في أسطر منفصلة.
+- shipping_line_numbers: أرقام الأسطر التي تتحدث فعليًا عن الشحن أو التوصيل.
+  إذا لم يذكر المنشور أي دولة في أي موضع، أعد قائمة فارغة ولا تدرج أسطر الشحن
+  العامة مثل "شحن مجاني" في قالب المنشور.
+- shipping_country: اسم كل دولة مذكورة صراحةً في أي موضع من المنشور، بصيغة
+  موحدة باللغة الإنجليزية ومفصولة بفواصل. اعتبر ذكر الدولة دليلًا كافيًا على
+  أن المنتج يشحن إليها، حتى إن لم تكن في سياق الشحن. لا تستنتج دولة غير مذكورة.
+  إذا لم تظهر أي دولة صراحةً في المنشور، أعد null.
+- shipping_country_mentions: قائمة بأسماء الدول كما كُتبت حرفيًا في المنشور،
+  وبالترتيب نفسه لقيم shipping_country. إذا لم تظهر دولة صراحةً، أعد قائمة
+  فارغة. لا يشترط أن تكون الدولة في سطر الشحن أو بجوار عبارة شحن.
 - link_sections: مجموعات أسطر الروابط. لكل رابط أعد line_numbers تشمل سطر
   الوصف أو العنوان وكل الأسطر التابعة له وسطر الرابط نفسه.
 - لا تضع أسطر العنوان والسعر في coupon_line_numbers إلا إذا كانت تتحدث
@@ -2380,7 +2364,6 @@ def _normalize_channel_analysis(result, text, ai_provider=None):
         shipping_country,
         result.get("shipping_country_mentions"),
         source_lines,
-        shipping_line_numbers,
     ):
         normalized["shipping_country"] = shipping_country
         normalized["shipping_line_numbers"] = shipping_line_numbers
