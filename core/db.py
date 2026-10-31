@@ -279,6 +279,10 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_auto_publish_deliveries_published_at
             ON auto_publish_deliveries (published_at DESC)
         """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auto_publish_deliveries_source_status
+            ON auto_publish_deliveries (source_post_id, status)
+        """)
         for provider_name, legacy_feature_key in AI_PROVIDER_FEATURE_KEYS.items():
             for scoped_features in AI_PROVIDER_FEATURE_KEYS_BY_KIND.values():
                 scoped_feature_key = scoped_features[provider_name]
@@ -1531,8 +1535,11 @@ def get_processed_channel_posts_for_auto_publish():
             conn.close()
 
 
+AUTO_PUBLISH_DAILY_OFFER_LIMIT = 2
+
+
 def claim_auto_publish_delivery(product_key, occurrence_count, source_post_id):
-    """Atomically claim one threshold, allowing stale claims to be retried."""
+    """Claim a threshold while enforcing an offer's daily publication limit."""
     if not DATABASE_URL:
         return None
 
@@ -1540,6 +1547,64 @@ def claim_auto_publish_delivery(product_key, occurrence_count, source_post_id):
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
+            source_post_id = int(source_post_id)
+            cursor.execute(
+                "SELECT id FROM statu WHERE id = %s FOR UPDATE",
+                (source_post_id,),
+            )
+            cursor.fetchone()
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM auto_publish_deliveries
+                WHERE source_post_id = %s
+                  AND (
+                      (
+                          status = 'published'
+                          AND published_at::date = CURRENT_DATE
+                      )
+                      OR (
+                          status = 'claimed'
+                          AND claimed_at >= CURRENT_TIMESTAMP
+                              - INTERVAL '15 minutes'
+                      )
+                  )
+                """,
+                (source_post_id,),
+            )
+            row = cursor.fetchone()
+            daily_publications = int(row[0] or 0) if row else 0
+            if daily_publications >= AUTO_PUBLISH_DAILY_OFFER_LIMIT:
+                cursor.execute(
+                    """
+                    INSERT INTO auto_publish_deliveries (
+                        product_identity, occurrence_count,
+                        source_post_id, status
+                    )
+                    VALUES (%s, %s, %s, 'skipped_daily_limit')
+                    ON CONFLICT (product_identity, occurrence_count)
+                    DO UPDATE SET
+                        source_post_id = EXCLUDED.source_post_id,
+                        status = 'skipped_daily_limit',
+                        claimed_at = CURRENT_TIMESTAMP
+                    WHERE auto_publish_deliveries.status IN ('pending', 'failed')
+                       OR (
+                           auto_publish_deliveries.status = 'claimed'
+                           AND auto_publish_deliveries.claimed_at
+                               < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
+                       )
+                    RETURNING id
+                    """,
+                    (
+                        product_key,
+                        int(occurrence_count),
+                        source_post_id,
+                    ),
+                )
+                cursor.fetchone()
+                conn.commit()
+                return None
+
             cursor.execute(
                 """
                 INSERT INTO auto_publish_deliveries (
@@ -1559,7 +1624,7 @@ def claim_auto_publish_delivery(product_key, occurrence_count, source_post_id):
                    )
                 RETURNING id
                 """,
-                (product_key, int(occurrence_count), int(source_post_id)),
+                (product_key, int(occurrence_count), source_post_id),
             )
             row = cursor.fetchone()
         conn.commit()

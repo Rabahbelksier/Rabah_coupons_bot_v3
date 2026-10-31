@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,42 +8,115 @@ for name in ("APP_KEY", "APP_SECRET", "TRACKING_ID", "TELEGRAM_TOKEN"):
 
 from services.auto_publisher import (
     AutoPublisher,
+    _cheapest_post,
     _due_publications,
     _publication_keyboard,
     _target_chat_id,
 )
-from core.db import get_auto_publish_report
+from core.db import claim_auto_publish_delivery, get_auto_publish_report
 
 
-def _iphone_posts():
+def _iphone_posts(count=9):
     return [
         {
             "id": index,
             "title": f"Apple iPhone 15 Pro {index}GB",
             "price": str(700 - index * 10),
         }
-        for index in range(1, 10)
+        for index in range(1, count + 1)
     ]
 
 
-def test_due_publications_uses_shared_identity_and_3_6_9_thresholds():
-    due = _due_publications(_iphone_posts())
+def test_due_publications_uses_five_post_thresholds():
+    due = _due_publications(_iphone_posts(17))
 
-    assert [threshold for _key, threshold, _post in due] == [3, 6, 9]
-    assert [post["id"] for _key, _threshold, post in due] == [9, 9, 9]
+    assert [threshold for _key, threshold, _post in due] == [5, 10, 15]
+    assert [post["id"] for _key, _threshold, post in due] == [17, 17, 17]
+
+
+def test_cheapest_post_wins_and_newest_breaks_price_ties():
+    posts = [
+        {
+            "id": 1,
+            "title": "Apple iPhone 15 Pro 128GB",
+            "price": "300",
+            "published_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        },
+        {
+            "id": 2,
+            "title": "Apple iPhone 15 Pro 256GB",
+            "price": "300",
+            "published_at": datetime(2025, 2, 1, tzinfo=timezone.utc),
+        },
+        {
+            "id": 3,
+            "title": "Apple iPhone 15 Pro 512GB",
+            "price": "450",
+            "published_at": datetime(2025, 3, 1, tzinfo=timezone.utc),
+        },
+    ]
+
+    assert _cheapest_post(posts)["id"] == 2
 
 
 def test_due_publications_does_not_merge_different_products():
-    posts = _iphone_posts() + [
-        {"id": 20, "title": "Samsung Galaxy S24 128GB", "price": "400"},
-        {"id": 21, "title": "Samsung Galaxy S24 256GB", "price": "450"},
-        {"id": 22, "title": "Samsung Galaxy S24 512GB", "price": "500"},
+    posts = _iphone_posts(5) + [
+        {
+            "id": 20 + index,
+            "title": f"Samsung Galaxy S24 {storage}GB",
+            "price": str(400 + index),
+        }
+        for index, storage in enumerate(
+            (128, 256, 512, 1024, 2048),
+            start=1,
+        )
     ]
 
     due = _due_publications(posts)
 
-    assert len(due) == 4
-    assert sorted(threshold for _key, threshold, _post in due) == [3, 3, 6, 9]
+    assert len(due) == 2
+    assert sorted(threshold for _key, threshold, _post in due) == [5, 5]
+    assert due[0][0] != due[1][0]
+
+
+def test_auto_publish_daily_limit_records_due_threshold_as_skipped():
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchone.side_effect = [None, (2,), None]
+
+    with patch("core.db.DATABASE_URL", "postgresql://test"), patch(
+        "core.db.get_db_connection",
+        return_value=connection,
+    ):
+        delivery_id = claim_auto_publish_delivery("model:apple:iphone:15", 15, 9)
+
+    assert delivery_id is None
+    statements = [call.args[0] for call in cursor.execute.call_args_list]
+    assert any("FOR UPDATE" in statement for statement in statements)
+    assert any("skipped_daily_limit" in statement for statement in statements)
+    assert not any(
+        "VALUES (%s, %s, %s, 'claimed')" in statement
+        for statement in statements
+    )
+    connection.commit.assert_called_once_with()
+
+
+def test_auto_publish_allows_claim_below_daily_limit():
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchone.side_effect = [(9,), (1,), (42,)]
+
+    with patch("core.db.DATABASE_URL", "postgresql://test"), patch(
+        "core.db.get_db_connection",
+        return_value=connection,
+    ):
+        delivery_id = claim_auto_publish_delivery("model:apple:iphone:15", 20, 9)
+
+    assert delivery_id == 42
+    assert "VALUES (%s, %s, %s, 'claimed')" in (
+        cursor.execute.call_args_list[-1].args[0]
+    )
+    connection.commit.assert_called_once_with()
 
 
 def test_channel_target_and_buttons_are_configured_for_one_row():

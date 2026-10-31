@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -48,15 +49,42 @@ def _publication_keyboard():
     ]])
 
 
+def _post_recency_key(post):
+    published_at = post.get("published_at")
+    if isinstance(published_at, str):
+        try:
+            published_at = datetime.fromisoformat(
+                published_at.replace("Z", "+00:00")
+            )
+        except ValueError:
+            published_at = None
+    if isinstance(published_at, datetime):
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+        timestamp = published_at.timestamp()
+    else:
+        timestamp = float("-inf")
+
+    try:
+        post_id = int(post.get("id") or 0)
+    except (TypeError, ValueError):
+        post_id = 0
+    return timestamp, post_id
+
+
 def _cheapest_post(posts):
-    return min(
-        posts,
-        key=lambda post: (
-            post.get("price") is None,
-            float(post.get("price")) if post.get("price") is not None else 0,
-            post.get("id") or 0,
-        ),
-    )
+    def price_key(post):
+        price = post.get("price")
+        return (
+            price is None,
+            float(price) if price is not None else 0,
+        )
+
+    lowest_price = min(price_key(post) for post in posts)
+    cheapest_posts = [
+        post for post in posts if price_key(post) == lowest_price
+    ]
+    return max(cheapest_posts, key=_post_recency_key)
 
 
 def _due_publications(posts):

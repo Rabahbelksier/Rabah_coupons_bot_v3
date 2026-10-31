@@ -18,3 +18,4 @@
 - [Gemini phrase/category caches](gemini-keyword-cache.md) — store title wording; normalize legacy underscores and keep official category alternatives OR.
 - [AI task scoping](ai-provider-task-scoping.md) — separate provider routing and admin switches by task, but preserve shared provider quota and usage state.
 - [Channel shipping-country rule](channel-shipping-country.md) — any explicitly named country in a product post qualifies as a destination, even outside shipping wording.
+- [Automatic publisher limits](automatic-publisher-limits.md) — publish at 5-item thresholds, choose cheapest then newest, and cap each selected offer at two sends per day.
