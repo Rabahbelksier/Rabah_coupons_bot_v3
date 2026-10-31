@@ -30,7 +30,7 @@ from utils.telegram import telegram_chat_id as _target_chat_id
 logger = logging.getLogger(__name__)
 
 REPEAT_THRESHOLD = 5
-PUBLISH_INTERVAL_SECONDS = 45
+PUBLISH_INTERVAL_SECONDS = 60
 STALE_DELIVERY_RETRY_MESSAGE = (
     "Automatic publication was claimed but did not complete; it will be retried."
 )

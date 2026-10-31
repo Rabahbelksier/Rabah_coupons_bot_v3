@@ -338,7 +338,7 @@ def _build_channel_content(text, analysis, urls, replacements):
         part for part in (price_text, str(currency).strip()) if part
     )
     blocks = [
-        "🛒ضع في السلة العرض يبدأ يوم الأحد",
+        "🛒ضع في السلة العرض يبدأ غدا",
     ]
     if dynamic_shipping_text:
         blocks.append(dynamic_shipping_text)
