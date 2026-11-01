@@ -8,8 +8,8 @@ for name in ("APP_KEY", "APP_SECRET", "TRACKING_ID", "TELEGRAM_TOKEN"):
 
 from services.auto_publisher import (
     AutoPublisher,
-    _cheapest_post,
     _due_publications,
+    _newest_post,
     _publication_keyboard,
     _target_chat_id,
 )
@@ -34,7 +34,7 @@ def test_due_publications_uses_five_post_thresholds():
     assert [post["id"] for _key, _threshold, post in due] == [17, 17, 17]
 
 
-def test_cheapest_post_wins_and_newest_breaks_price_ties():
+def test_newest_post_wins_even_when_it_costs_more():
     posts = [
         {
             "id": 1,
@@ -56,7 +56,7 @@ def test_cheapest_post_wins_and_newest_breaks_price_ties():
         },
     ]
 
-    assert _cheapest_post(posts)["id"] == 2
+    assert _newest_post(posts)["id"] == 3
 
 
 def test_due_publications_does_not_merge_different_products():

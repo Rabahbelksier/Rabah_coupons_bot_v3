@@ -72,19 +72,8 @@ def _post_recency_key(post):
     return timestamp, post_id
 
 
-def _cheapest_post(posts):
-    def price_key(post):
-        price = post.get("price")
-        return (
-            price is None,
-            float(price) if price is not None else 0,
-        )
-
-    lowest_price = min(price_key(post) for post in posts)
-    cheapest_posts = [
-        post for post in posts if price_key(post) == lowest_price
-    ]
-    return max(cheapest_posts, key=_post_recency_key)
+def _newest_post(posts):
+    return max(posts, key=_post_recency_key)
 
 
 def _due_publications(posts):
@@ -104,7 +93,7 @@ def _due_publications(posts):
             due.append((
                 product_key,
                 threshold,
-                _cheapest_post(product_posts),
+                _newest_post(product_posts),
             ))
     return due
 
