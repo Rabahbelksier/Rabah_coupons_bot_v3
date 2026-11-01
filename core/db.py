@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import unicodedata
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
 import psycopg2
@@ -1776,7 +1777,7 @@ def _normalize_result_limit(limit):
 
 
 def search_channel_posts(intent, limit=None):
-    """Search processed posts with category-aware and typo-tolerant ranking."""
+    """Search processed posts with recency-first, category-aware ranking."""
     if not DATABASE_URL:
         return []
 
@@ -1841,9 +1842,7 @@ def search_channel_posts(intent, limit=None):
         conn = get_db_connection()
         with conn.cursor() as cursor:
             if request_type == "trending" and not trending_has_content_filters:
-                # Return one representative offer per product. The product
-                # with the most occurrences comes first, and its cheapest
-                # processed offer is the representative shown to the user.
+                # Return the newest representative offer for each product.
                 product_key = (
                     "COALESCE("
                     "NULLIF(aliexpress_product_id, ''), "
@@ -1866,13 +1865,12 @@ def search_channel_posts(intent, limit=None):
                                  shipping_country, offer_type, category,
                                  first_level_category_name,
                                    second_level_category_name,
-                               COUNT(*) OVER (
-                                   PARTITION BY {product_key}
-                               ) AS product_occurrences,
                                ROW_NUMBER() OVER (
                                    PARTITION BY {product_key}
-                                   ORDER BY price ASC NULLS LAST,
-                                            published_at DESC NULLS LAST,
+                                    ORDER BY published_at DESC NULLS LAST,
+                                             CASE WHEN published_at IS NULL
+                                                  THEN id END DESC,
+                                             price ASC NULLS LAST,
                                             id DESC
                                ) AS product_rank
                         FROM statu
@@ -1887,9 +1885,10 @@ def search_channel_posts(intent, limit=None):
                                second_level_category_name
                     FROM ranked_posts
                     WHERE product_rank = 1
-                    ORDER BY product_occurrences DESC,
-                             price ASC NULLS LAST,
-                             published_at DESC NULLS LAST,
+                     ORDER BY published_at DESC NULLS LAST,
+                              CASE WHEN published_at IS NULL
+                                   THEN id END DESC,
+                              price ASC NULLS LAST,
                              id DESC
                     {limit_clause}
                     """,
@@ -1907,7 +1906,7 @@ def search_channel_posts(intent, limit=None):
                                second_level_category_name
                     FROM statu
                     WHERE {' AND '.join(conditions)}
-                    ORDER BY published_at DESC NULLS LAST
+                    ORDER BY published_at DESC NULLS LAST, id DESC
                     """,
                     params,
                 )
@@ -1925,6 +1924,14 @@ def search_channel_posts(intent, limit=None):
                 keywords,
                 result_limit,
             )
+        posts.sort(
+            key=lambda post: _post_recency_order_key(
+                post,
+                intent,
+                1.0,
+                post.get("id") or 0,
+            )
+        )
         return (
             list(posts)
             if result_limit is None
@@ -1938,18 +1945,14 @@ def search_channel_posts(intent, limit=None):
             continue
         ranked_posts.append((match_score, position, post))
 
-    if request_type in {"category_price_range", "product_price_range"}:
-        ranked_posts.sort(
-            key=lambda item: _price_order_key(item[2], intent, item[0], item[1])
+    ranked_posts.sort(
+        key=lambda item: _post_recency_order_key(
+            item[2],
+            intent,
+            item[0],
+            item[1],
         )
-    elif request_type in {"category_cheapest", "product_cheapest"}:
-        ranked_posts.sort(
-            key=lambda item: _price_order_key(item[2], intent, item[0], item[1])
-        )
-    else:
-        ranked_posts.sort(
-            key=lambda item: _price_order_key(item[2], intent, item[0], item[1])
-        )
+    )
 
     ranked = [post for _, _, post in ranked_posts]
     if request_type in {
@@ -2161,8 +2164,44 @@ def _price_order_key(post, intent, match_score, position):
             position,
         )
     # Explicit product searches intentionally keep all matching offers in
-    # ascending price order; broad searches are also easier to compare this way.
+    # ascending price order as a secondary key when publication times tie.
     return (missing_price, numeric_price or 0, -match_score, position)
+
+
+def _post_recency_order_key(post, intent=None, match_score=1.0, position=0):
+    """Put newer source posts first; use price intent only to break date ties."""
+    published_at = post.get("published_at")
+    if isinstance(published_at, str):
+        try:
+            published_at = datetime.fromisoformat(
+                published_at.replace("Z", "+00:00")
+            )
+        except ValueError:
+            published_at = None
+
+    timestamp = None
+    if isinstance(published_at, datetime):
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+        try:
+            timestamp = published_at.timestamp()
+        except (OverflowError, OSError, ValueError):
+            timestamp = None
+
+    try:
+        post_id = int(post.get("id") or 0)
+    except (TypeError, ValueError):
+        post_id = 0
+
+    price_tiebreaker = _price_order_key(
+        post,
+        intent or {},
+        match_score,
+        position,
+    )
+    if timestamp is None:
+        return (1, -post_id, price_tiebreaker, position)
+    return (0, -timestamp, price_tiebreaker, -post_id, position)
 
 
 def _price_as_float(value):
@@ -2437,7 +2476,7 @@ def _infer_category(category, keywords):
 
 
 def _deduplicate_ranked_posts(posts, limit, intent=None):
-    """Keep one cheapest representative for each product in broad searches."""
+    """Keep the newest eligible representative for each broad product."""
     unique = {}
     for post in posts:
         key = _broad_product_identity(post)
@@ -2445,12 +2484,12 @@ def _deduplicate_ranked_posts(posts, limit, intent=None):
         if current is None:
             unique[key] = post
             continue
-        if _price_order_key(
+        if _post_recency_order_key(
             post,
             intent or {},
             1.0,
             post.get("id") or 0,
-        ) < _price_order_key(
+        ) < _post_recency_order_key(
             current,
             intent or {},
             1.0,
@@ -2460,7 +2499,7 @@ def _deduplicate_ranked_posts(posts, limit, intent=None):
     representatives = list(unique.values())
     if intent:
         representatives.sort(
-            key=lambda post: _price_order_key(
+            key=lambda post: _post_recency_order_key(
                 post,
                 intent,
                 1.0,
@@ -2800,7 +2839,7 @@ def _post_match_score(post, intent, keywords):
 
 
 def _rank_filtered_trending_posts(posts, intent, keywords, limit):
-    """Apply semantic filters before grouping trending product offers."""
+    """Filter grouped trending offers and rank newest source posts first."""
     groups = {}
     for post in posts:
         if _post_match_score(post, intent, keywords) is None:
@@ -2811,12 +2850,12 @@ def _rank_filtered_trending_posts(posts, intent, keywords, limit):
             groups[product_key] = [1, post]
             continue
         current[0] += 1
-        if _price_order_key(
+        if _post_recency_order_key(
             post,
             intent,
             1.0,
             post.get("id") or 0,
-        ) < _price_order_key(
+        ) < _post_recency_order_key(
             current[1],
             intent,
             1.0,
@@ -2829,26 +2868,17 @@ def _rank_filtered_trending_posts(posts, intent, keywords, limit):
         for occurrences, representative in groups.values()
     ]
 
-    if intent.get("price_mode") or intent.get("target_price") is not None:
-        representatives.sort(
-            key=lambda item: _price_order_key(
+    representatives.sort(
+        key=lambda item: (
+            _post_recency_order_key(
                 item[1],
                 intent,
                 1.0,
                 item[1].get("id") or 0,
-            )
+            ),
+            -item[0],
         )
-    else:
-        representatives.sort(
-            key=lambda item: (
-                -item[0],
-                item[1].get("price") is None,
-                item[1].get("price")
-                if item[1].get("price") is not None
-                else 0,
-                -(item[1].get("id") or 0),
-            )
-        )
+    )
     ranked_posts = [post for _, post in representatives]
     return ranked_posts if limit is None else ranked_posts[:limit]
 

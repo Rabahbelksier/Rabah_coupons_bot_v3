@@ -1,6 +1,7 @@
 import asyncio
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2966,7 +2967,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
-    def test_trending_search_returns_one_cheapest_offer_per_product(
+    def test_trending_search_returns_one_newest_offer_per_product(
         self,
         get_connection,
     ):
@@ -2997,7 +2998,7 @@ class DatabaseSearchTests(unittest.TestCase):
         query, params = cursor.execute.call_args.args
         self.assertIn("ROW_NUMBER()", query)
         self.assertIn("WHERE product_rank = 1", query)
-        self.assertIn("product_occurrences DESC", query)
+        self.assertIn("published_at DESC NULLS LAST", query)
         self.assertEqual(params, [50])
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
@@ -3027,11 +3028,12 @@ class DatabaseSearchTests(unittest.TestCase):
             (
                 index,
                 f"Product {index}",
-                index,
+                26 - index,
                 "",
                 "processed",
                 None,
-                None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc)
+                + timedelta(seconds=26 - index),
                 None,
                 None,
                 None,
@@ -3043,6 +3045,7 @@ class DatabaseSearchTests(unittest.TestCase):
         result = db.search_channel_posts({"request_type": "trending"})
 
         self.assertEqual(len(result), 25)
+        self.assertEqual(result[0]["id"], 1)
         query, params = cursor.execute.call_args.args
         self.assertNotIn("LIMIT", query)
         self.assertEqual(params, [])
@@ -3050,7 +3053,7 @@ class DatabaseSearchTests(unittest.TestCase):
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
     @patch.object(db, "_post_match_score", return_value=1.0)
-    def test_unlimited_standard_search_returns_all_ranked_posts(
+    def test_unlimited_product_search_returns_all_posts_newest_first(
         self,
         _match_score,
         get_connection,
@@ -3080,7 +3083,8 @@ class DatabaseSearchTests(unittest.TestCase):
                 "",
                 "processed",
                 None,
-                None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc)
+                + timedelta(seconds=26 - index),
                 None,
                 None,
                 None,
@@ -3090,11 +3094,12 @@ class DatabaseSearchTests(unittest.TestCase):
         ]
 
         result = db.search_channel_posts({
-            "request_type": "product_best",
+            "request_type": "product_cheapest",
             "keywords": ["product"],
         })
 
         self.assertEqual(len(result), 25)
+        self.assertEqual([post["id"] for post in result[:3]], [1, 2, 3])
 
     @patch.object(db, "_post_match_score", return_value=1.0)
     def test_unlimited_filtered_trending_keeps_all_representatives(
@@ -3146,11 +3151,13 @@ class DatabaseSearchTests(unittest.TestCase):
         rows = [
             (
                 1, "iPhone 15 Pro 256GB", 500, "phone", "processed",
-                "phone-1", None, None, None, None, "phone-1",
+                "phone-1", datetime(2025, 2, 2, tzinfo=timezone.utc),
+                None, None, None, "phone-1",
             ),
             (
                 2, "iPhone 15 Pro 256GB", 450, "phone", "processed",
-                "phone-2", None, None, None, None, "phone-1",
+                "phone-2", datetime(2025, 2, 1, tzinfo=timezone.utc),
+                None, None, None, "phone-1",
             ),
             (
                 3, "UGREEN USB-C Charging Cable for Huawei Phones", 5,
@@ -3173,7 +3180,7 @@ class DatabaseSearchTests(unittest.TestCase):
             limit=10,
         )
 
-        self.assertEqual([post["id"] for post in result], [2])
+        self.assertEqual([post["id"] for post in result], [1])
         query, params = cursor.execute.call_args.args
         self.assertNotIn("ROW_NUMBER()", query)
         self.assertNotIn("LIMIT", query)
@@ -3181,7 +3188,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
-    def test_near_price_search_scans_all_eligible_offers_and_ranks_by_distance(
+    def test_near_price_search_scans_all_offers_but_ranks_newest_first(
         self,
         get_connection,
     ):
@@ -3205,7 +3212,8 @@ class DatabaseSearchTests(unittest.TestCase):
                 "",
                 "processed",
                 None,
-                None,
+                datetime(2025, 1, 2, tzinfo=timezone.utc)
+                - timedelta(seconds=post_id),
                 None,
                 None,
                 None,
@@ -3221,10 +3229,23 @@ class DatabaseSearchTests(unittest.TestCase):
         rows.append(
             (
                 2001, "Older exact product", 100, "", "processed", None, None,
-                None, None, None, "older-exact", None, "other", None, None,
+                None,
+                None,
+                None,
+                "older-exact",
+                None,
+                "other",
+                None,
+                None,
                 "ai",
             )
         )
+        rows[-1] = (
+                2001, "Older exact product", 100, "", "processed", None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc),
+                None, None, None, "older-exact", None, "other", None, None,
+                "ai",
+            )
         cursor.fetchall.return_value = rows
 
         result = db.search_channel_posts(
@@ -3239,7 +3260,7 @@ class DatabaseSearchTests(unittest.TestCase):
         query, params = cursor.execute.call_args.args
         self.assertNotIn("LIMIT", query)
         self.assertEqual(params, [])
-        self.assertEqual(result[0]["id"], 2001)
+        self.assertEqual(result[0]["id"], 1)
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
@@ -3324,7 +3345,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
-    def test_price_range_returns_cheapest_offer_inside_the_range(
+    def test_price_range_returns_newest_offer_inside_the_range(
         self,
         get_connection,
     ):
@@ -3349,11 +3370,18 @@ class DatabaseSearchTests(unittest.TestCase):
         rows = [
             (
                 1, "iPhone 15 Pro", 180, "phone", "processed",
-                "phone-1", None, None, None, None, "phone-1", "Algeria",
+                "phone-1", datetime(2025, 2, 2, tzinfo=timezone.utc),
+                None, None, None, "phone-1", "Algeria",
             ),
             (
                 2, "Samsung S24", 120, "phone", "processed",
-                "phone-2", None, None, None, None, "phone-2", "Algeria",
+                "phone-2", datetime(2025, 2, 1, tzinfo=timezone.utc),
+                None, None, None, "phone-2", "Algeria",
+            ),
+            (
+                3, "iPhone 15 Pro", 110, "phone", "processed",
+                "phone-3", datetime(2025, 1, 31, tzinfo=timezone.utc),
+                None, None, None, "phone-1", "Algeria",
             ),
         ]
         cursor.fetchall.return_value = rows
@@ -3369,7 +3397,7 @@ class DatabaseSearchTests(unittest.TestCase):
             limit=10,
         )
 
-        self.assertEqual([post["id"] for post in result], [2, 1])
+        self.assertEqual([post["id"] for post in result], [1, 2])
 
     def test_category_search_requires_all_explicit_phone_specs(self):
         from core.db import _post_match_score
@@ -3750,13 +3778,27 @@ class DatabaseSearchTests(unittest.TestCase):
                     _classify_legacy_post_category(title),
                     "accessories",
                 )
-    def test_below_price_dedup_keeps_the_offer_nearest_to_the_limit(self):
+    def test_dedup_prefers_newest_over_price_direction(self):
         from core.db import _deduplicate_ranked_posts
 
         result = _deduplicate_ranked_posts(
             [
-                {"id": 1, "aliexpress_product_id": "same", "price": 20},
-                {"id": 2, "aliexpress_product_id": "same", "price": 90},
+                {
+                    "id": 1,
+                    "aliexpress_product_id": "same",
+                    "price": 90,
+                    "published_at": datetime(
+                        2025, 1, 1, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "id": 2,
+                    "aliexpress_product_id": "same",
+                    "price": 20,
+                    "published_at": datetime(
+                        2025, 1, 2, tzinfo=timezone.utc
+                    ),
+                },
             ],
             10,
             {"price_mode": "below", "max_price": 100},
