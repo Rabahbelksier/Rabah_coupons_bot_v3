@@ -7,4 +7,10 @@ Automatic channel publication triggers at cumulative product thresholds 5, 10, 1
 
 **Why:** The user explicitly requested newest-first selection regardless of price, plus this threshold and daily-cap behavior.
 
-**How to apply:** Preserve threshold-level idempotency. Enforce the cap using persisted delivery records per selected source offer, count active claims as reservations, and keep skipped thresholds terminal. The existing report uses the database timezone for day boundaries.
+**How to apply:** Preserve threshold-level idempotency. Enforce the cap using persisted delivery records per selected source offer, count active claims as reservations, and keep skipped thresholds terminal. Persist a sending state before calling Telegram; ambiguous send outcomes must not be retried automatically. The report uses the database timezone for day boundaries.
+
+Automatic publishing must not retry a Telegram send when the request outcome is ambiguous. Persist the send boundary before making the request, and mark uncertain outcomes terminal rather than retryable.
+
+**Why:** Telegram may accept a post even when the client loses the response; retrying such a request can publish an unintended duplicate.
+
+**How to apply:** Keep uncertain results visible to administrators and excluded from automatic retries. Failures known to happen before delivery may remain retryable, while ancillary text failures after a successful photo must not reset the completed delivery.

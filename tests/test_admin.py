@@ -561,6 +561,7 @@ class AdminCartTests(unittest.TestCase):
         "published_total": 10,
         "failed_today": 1,
         "claimed": 2,
+        "uncertain": 0,
     })
     @patch("handlers.admin.is_feature_enabled", return_value=True)
     def test_auto_publish_view_shows_requested_periods_and_controls(
@@ -583,6 +584,7 @@ class AdminCartTests(unittest.TestCase):
             "هذا الشهر: 3",
             "الشهر الماضي: 4",
             "الإجمالي: 10",
+            "نتائج الإرسال غير المؤكدة: 0",
         ):
             self.assertIn(line, text)
         callbacks = [

@@ -14,10 +14,13 @@ from core.db import (
     is_feature_enabled,
     mark_auto_publish_delivery_failed,
     mark_auto_publish_delivery_published,
+    mark_auto_publish_delivery_sending,
+    mark_auto_publish_delivery_uncertain,
     product_identity,
     save_channel_photo_file_id,
 )
 from handlers.ai_search import (
+    PhotoDeliveryUncertainError,
     _caption_for_content,
     _load_post_photo,
     _photo_to_input_file,
@@ -159,17 +162,24 @@ class AutoPublisher:
             )
             if not delivery_id:
                 continue
+            sending = await asyncio.to_thread(
+                mark_auto_publish_delivery_sending,
+                delivery_id,
+            )
+            if not sending:
+                continue
             try:
                 sent = await self._publish_post(post)
-                await asyncio.to_thread(
-                    mark_auto_publish_delivery_published,
-                    delivery_id,
-                    sent.message_id,
-                )
-                self._logger.info(
-                    "Published repeated product %s at threshold %s",
+            except PhotoDeliveryUncertainError:
+                self._logger.exception(
+                    "Automatic publication result is uncertain for "
+                    "product %s at threshold %s; it will not be retried",
                     product_key,
                     threshold,
+                )
+                await asyncio.to_thread(
+                    mark_auto_publish_delivery_uncertain,
+                    delivery_id,
                 )
             except Exception:
                 self._logger.exception(
@@ -186,6 +196,44 @@ class AutoPublisher:
                     self._logger.exception(
                         "Could not release failed automatic publication claim"
                     )
+            else:
+                try:
+                    published = await asyncio.to_thread(
+                        mark_auto_publish_delivery_published,
+                        delivery_id,
+                        sent.message_id,
+                    )
+                    if published:
+                        self._logger.info(
+                            "Published repeated product %s at threshold %s",
+                            product_key,
+                            threshold,
+                        )
+                    else:
+                        self._logger.warning(
+                            "Publication %s was sent but its status was not "
+                            "updated; it will not be retried",
+                            delivery_id,
+                        )
+                        await asyncio.to_thread(
+                            mark_auto_publish_delivery_uncertain,
+                            delivery_id,
+                        )
+                except Exception:
+                    self._logger.exception(
+                        "Publication %s was sent, but its status could not "
+                        "be confirmed; it will not be retried",
+                        delivery_id,
+                    )
+                    try:
+                        await asyncio.to_thread(
+                            mark_auto_publish_delivery_uncertain,
+                            delivery_id,
+                        )
+                    except Exception:
+                        self._logger.exception(
+                            "Could not mark automatic publication uncertain"
+                        )
 
     async def _publish_post(self, post):
         chat_id = _target_chat_id(AUTO_PUBLISH_CHANNEL_LINK)
@@ -207,10 +255,17 @@ class AutoPublisher:
         if not sent:
             raise RuntimeError("The repeated offer has no usable image")
         if len(content) > 1024:
-            await self._application.bot.send_message(
-                chat_id=chat_id,
-                text=content,
-            )
+            try:
+                await self._application.bot.send_message(
+                    chat_id=chat_id,
+                    text=content,
+                )
+            except Exception:
+                self._logger.exception(
+                    "Offer photo was published, but its long text could "
+                    "not be sent for post %s",
+                    post.get("id"),
+                )
         return sent
 
     async def _send_photo(self, chat_id, post, photo, downloaded_source):

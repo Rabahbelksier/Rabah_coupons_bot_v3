@@ -13,6 +13,7 @@ from services.auto_publisher import (
     _publication_keyboard,
     _target_chat_id,
 )
+from handlers.ai_search import PhotoDeliveryUncertainError
 from core.db import claim_auto_publish_delivery, get_auto_publish_report
 
 
@@ -119,6 +120,51 @@ def test_auto_publish_allows_claim_below_daily_limit():
     connection.commit.assert_called_once_with()
 
 
+def test_auto_publish_uncertain_send_is_not_released_for_retry():
+    publisher = AutoPublisher()
+    publisher._application = SimpleNamespace(bot=SimpleNamespace())
+
+    with patch(
+        "services.auto_publisher.claim_auto_publish_delivery",
+        return_value=27,
+    ), patch(
+        "services.auto_publisher.mark_auto_publish_delivery_sending",
+        return_value=True,
+    ) as mark_sending, patch(
+        "services.auto_publisher.mark_auto_publish_delivery_uncertain",
+        return_value=True,
+    ) as mark_uncertain, patch(
+        "services.auto_publisher.mark_auto_publish_delivery_failed",
+    ) as mark_failed, patch(
+        "services.auto_publisher.mark_auto_publish_delivery_published",
+    ) as mark_published, patch(
+        "services.auto_publisher.get_processed_channel_posts_for_auto_publish",
+        return_value=_iphone_posts(5),
+    ), patch(
+        "services.auto_publisher.is_feature_enabled",
+        return_value=True,
+    ), patch(
+        "services.auto_publisher.AUTO_PUBLISH_CHANNEL_LINK",
+        "https://t.me/deals_channel",
+    ), patch.object(
+        publisher,
+        "_publish_post",
+        new=AsyncMock(
+            side_effect=PhotoDeliveryUncertainError(
+                "Telegram response was lost"
+            )
+        ),
+    ):
+        import asyncio
+
+        asyncio.run(publisher.run_once())
+
+    mark_sending.assert_called_once_with(27)
+    mark_uncertain.assert_called_once_with(27)
+    mark_failed.assert_not_called()
+    mark_published.assert_not_called()
+
+
 def test_channel_target_and_buttons_are_configured_for_one_row():
     assert _target_chat_id("https://t.me/deals_channel") == "@deals_channel"
     buttons = _publication_keyboard().inline_keyboard[0]
@@ -136,7 +182,7 @@ def test_channel_target_and_buttons_are_configured_for_one_row():
 def test_auto_publish_report_counts_published_periods_and_lifetime_total():
     connection = MagicMock()
     cursor = connection.cursor.return_value.__enter__.return_value
-    cursor.fetchone.return_value = (1, 2, 3, 4, 10, 5, 6, 1)
+    cursor.fetchone.return_value = (1, 2, 3, 4, 10, 5, 6, 1, 2)
 
     with patch("core.db.DATABASE_URL", "postgresql://test"), patch(
         "core.db.get_db_connection",
@@ -153,10 +199,13 @@ def test_auto_publish_report_counts_published_periods_and_lifetime_total():
         "failed_today": 5,
         "claimed": 6,
         "thresholds_today": 1,
+        "uncertain": 2,
     }
     query = cursor.execute.call_args.args[0]
     assert "published_at::date = CURRENT_DATE - 1" in query
     assert "COUNT(*) FILTER (WHERE status = 'published')" in query
+    assert "status IN ('claimed', 'sending')" in query
+    assert "COUNT(*) FILTER (WHERE status = 'uncertain')" in query
     connection.close.assert_called_once_with()
 
 
@@ -232,3 +281,36 @@ def test_auto_publisher_uses_saved_image_link_and_caches_file_id():
     assert result is sent
     assert bot.send_photo.await_args.kwargs["photo"] == post["link_img"]
     cache.assert_awaited_once_with(80, "telegram-cached-photo-id")
+
+
+def test_long_caption_failure_does_not_retry_a_successful_photo():
+    sent = SimpleNamespace(
+        photo=[SimpleNamespace(file_id="telegram-cached-photo-id")],
+        message_id=100,
+    )
+    bot = SimpleNamespace(
+        send_photo=AsyncMock(return_value=sent),
+        send_message=AsyncMock(side_effect=TimeoutError("reply timed out")),
+    )
+    publisher = AutoPublisher()
+    publisher._application = SimpleNamespace(bot=bot)
+    post = {
+        "id": 81,
+        "content": "عرض طويل " * 300,
+        "photo_file_id": "cached-photo",
+    }
+
+    with patch(
+        "services.auto_publisher.AUTO_PUBLISH_CHANNEL_LINK",
+        "https://t.me/deals_channel",
+    ), patch(
+        "services.auto_publisher._send_post_photo_with_fallback",
+        new=AsyncMock(return_value=sent),
+    ):
+        import asyncio
+
+        result = asyncio.run(publisher._publish_post(post))
+
+    assert result is sent
+    bot.send_photo.assert_not_awaited()
+    bot.send_message.assert_awaited_once()

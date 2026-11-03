@@ -611,7 +611,8 @@ async def send_feature_status(message, feature_key, *, edit=False):
             f"الإجمالي: {report['published_total']}\n"
             "\nحالة المحاولات:\n"
             f"المحاولات الفاشلة: {report['failed_today']}\n"
-            f"المحاولات المعلقة: {report['claimed']}"
+            f"المحاولات المعلقة: {report['claimed']}\n"
+            f"نتائج الإرسال غير المؤكدة: {report['uncertain']}"
         )
     await _render_admin_message(
         message,

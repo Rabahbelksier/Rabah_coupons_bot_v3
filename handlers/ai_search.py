@@ -13,6 +13,7 @@ from telegram import (
     ReplyKeyboardRemove,
     Update,
 )
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from config import AI_USER_REQUEST_TIMEOUT_SECONDS
@@ -111,6 +112,10 @@ _SAVED_OFFERS_BUTTON_MARKER = "\u2063"
 _source_photo_tasks = {}
 
 
+class PhotoDeliveryUncertainError(RuntimeError):
+    """A Telegram photo request failed without confirming whether it was sent."""
+
+
 def _clear_ai_search_state(context):
     context.user_data.pop("ai_search_active", None)
     context.user_data.pop("ai_search_results", None)
@@ -121,8 +126,20 @@ def _clear_ai_search_state(context):
 
 
 def _store_ai_search_results(context, posts):
-    """Keep the complete local result set used by navigation."""
-    context.user_data["ai_search_results"] = list(posts)
+    """Store results in order, removing offers with identical displayed text."""
+    unique_posts = []
+    seen_content = set()
+    for post in posts:
+        content = _post_content(post)
+        raw_content = post.get("content") or post.get("title")
+        if raw_content:
+            content_key = " ".join(content.split()).casefold()
+            if content_key in seen_content:
+                continue
+            seen_content.add(content_key)
+        unique_posts.append(post)
+
+    context.user_data["ai_search_results"] = unique_posts
     context.user_data["ai_search_index"] = 0
 
 
@@ -404,6 +421,18 @@ async def _send_text_post(bot, chat_id, content, reply_markup=None):
     )
 
 
+async def _send_photo_once(bot, **kwargs):
+    """Separate definite Telegram rejections from ambiguous delivery failures."""
+    try:
+        return await bot.send_photo(**kwargs)
+    except BadRequest:
+        raise
+    except Exception as error:
+        raise PhotoDeliveryUncertainError(
+            "Telegram may have accepted the photo before the request failed"
+        ) from error
+
+
 async def _download_source_photo(post, context):
     monitor = context.application.bot_data.get("channel_monitor")
     if not monitor:
@@ -614,7 +643,8 @@ async def _send_post_photo_with_fallback(
             return None
 
         try:
-            sent = await bot.send_photo(
+            sent = await _send_photo_once(
+                bot,
                 chat_id=chat_id,
                 photo=_photo_to_input_file(
                     photo,
@@ -624,7 +654,7 @@ async def _send_post_photo_with_fallback(
                 caption=_caption_for_content(content),
                 reply_markup=reply_markup,
             )
-        except Exception:
+        except BadRequest:
             logger.exception(
                 "Could not send photo for post %s from %s",
                 post.get("id"),
@@ -721,41 +751,43 @@ async def _replace_stored_post_message(query, context, post, has_previous, has_n
                 ),
                 reply_markup=navigation,
             )
-        except Exception:
-            logger.exception(
-                "Could not edit stored photo for post %s",
-                post.get("id"),
-            )
-            excluded_origins = {post.get("_resolved_photo_origin")}
-            excluded_urls = {photo}
-            sent = await _send_post_photo_with_fallback(
-                bot,
-                chat_id,
-                context,
-                post,
-                content,
-                navigation,
-                excluded_origins=excluded_origins,
-                excluded_urls=excluded_urls,
-            )
-            if not sent:
-                return None
-            try:
-                await bot.delete_message(
-                    chat_id=chat_id,
-                    message_id=message_id,
+        except BadRequest as error:
+            if "message is not modified" not in str(error).casefold():
+                logger.exception(
+                    "Could not edit stored photo for post %s",
+                    post.get("id"),
                 )
-            except Exception:
-                logger.warning(
-                    "Could not delete replaced AI result message %s",
-                    message_id,
-                    exc_info=True,
+                excluded_origins = {post.get("_resolved_photo_origin")}
+                excluded_urls = {photo}
+                sent = await _send_post_photo_with_fallback(
+                    bot,
+                    chat_id,
+                    context,
+                    post,
+                    content,
+                    navigation,
+                    excluded_origins=excluded_origins,
+                    excluded_urls=excluded_urls,
                 )
-            if len(content) > 1024:
-                auxiliary = await _send_text_post(bot, chat_id, content)
-                await _record_auxiliary_messages(context, auxiliary)
-            return sent
-        if getattr(edited, "photo", None):
+                if not sent:
+                    return None
+                try:
+                    await bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Could not delete replaced AI result message %s",
+                        message_id,
+                        exc_info=True,
+                    )
+                if len(content) > 1024:
+                    auxiliary = await _send_text_post(bot, chat_id, content)
+                    await _record_auxiliary_messages(context, auxiliary)
+                return sent
+            edited = None
+        if edited and getattr(edited, "photo", None):
             if _should_cache_resolved_photo(post, downloaded_source):
                 await _cache_photo_file_id(
                     post["id"],
@@ -763,12 +795,16 @@ async def _replace_stored_post_message(query, context, post, has_previous, has_n
                 )
     elif not photo and not getattr(message, "photo", None):
         chunks = _split_text(content)
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=chunks[0],
-            reply_markup=navigation,
-        )
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=chunks[0],
+                reply_markup=navigation,
+            )
+        except BadRequest as error:
+            if "message is not modified" not in str(error).casefold():
+                raise
         if len(chunks) > 1:
             auxiliary = await _send_text_chunks(bot, chat_id, chunks[1:])
             await _record_auxiliary_messages(context, auxiliary)
@@ -777,13 +813,14 @@ async def _replace_stored_post_message(query, context, post, has_previous, has_n
         # Telegram. Send it as a fresh photo message, just like the first
         # result, then cache the Bot API file_id for future navigation.
         try:
-            sent = await bot.send_photo(
+            sent = await _send_photo_once(
+                bot,
                 chat_id=chat_id,
                 photo=_photo_to_input_file(photo, post, downloaded_source),
                 caption=_caption_for_content(content),
                 reply_markup=navigation,
             )
-        except Exception:
+        except BadRequest:
             logger.exception(
                 "Could not upload replacement photo for post %s",
                 post.get("id"),
@@ -1213,6 +1250,15 @@ async def _navigate_ai_results(update, context, direction):
                 has_previous=index > 0,
                 has_next=index < len(results) - 1,
             )
+        except PhotoDeliveryUncertainError:
+            # Do not retry the same transition: Telegram may already have
+            # delivered the replacement photo even though its reply was lost.
+            context.user_data["ai_search_index"] = index
+            await query.message.reply_text(
+                "⚠️ تعذر تأكيد عرض الصورة. قد يكون العرض قد وصل؛ "
+                "استخدم السابق أو التالي للمتابعة دون إعادة الإرسال."
+            )
+            return
         except Exception:
             logger.exception("Could not display AI search result at index %s", index)
             await query.message.reply_text(

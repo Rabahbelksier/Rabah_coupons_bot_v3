@@ -11,6 +11,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+from telegram.error import BadRequest
 
 import core.db as db
 from core.categories import (
@@ -37,6 +38,8 @@ from handlers.ai_search import (
     _clear_ai_search_state,
     _saved_offer_intent,
     _saved_offers_main_markup,
+    _send_post_photo_with_fallback,
+    _store_ai_search_results,
     ask_ai_callback,
     _navigation_keyboard,
     _load_post_photo,
@@ -89,6 +92,133 @@ class KeyboardTraceMessage:
 
 
 class AiSearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_result_storage_removes_only_identical_displayed_offers(self):
+        context = FakeContext()
+        first = {
+            "id": 1,
+            "content": "عرض هاتف جديد\nالسعر: 100",
+        }
+        duplicate = {
+            "id": 2,
+            "content": "عرض هاتف جديد   السعر: 100",
+        }
+        distinct = {
+            "id": 3,
+            "content": "عرض هاتف آخر\nالسعر: 100",
+        }
+
+        _store_ai_search_results(context, [first, duplicate, distinct])
+
+        self.assertEqual(
+            context.user_data["ai_search_results"],
+            [first, distinct],
+        )
+        self.assertEqual(context.user_data["ai_search_index"], 0)
+
+    async def test_ambiguous_photo_send_does_not_try_another_photo(self):
+        context = FakeContext()
+        bot = SimpleNamespace(send_photo=AsyncMock(side_effect=TimeoutError()))
+        post = {
+            "id": 41,
+            "content": "عرض محفوظ",
+            "photo_file_id": "cached-photo",
+            "_resolved_photo_origin": "cached",
+        }
+
+        with patch(
+            "handlers.ai_search._load_post_photo",
+            new=AsyncMock(return_value=("cached-photo", False)),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "may have accepted the photo",
+            ):
+                await _send_post_photo_with_fallback(
+                    bot,
+                    123,
+                    context,
+                    post,
+                    "عرض محفوظ",
+                )
+
+        bot.send_photo.assert_awaited_once()
+
+    async def test_text_search_deduplicates_identical_visible_results(self):
+        context = FakeContext()
+        context.user_data["ai_search_active"] = True
+        message = FakeMessage("عروض على هاتف")
+        posts = [
+            {"id": 1, "content": "نفس العرض"},
+            {"id": 2, "content": "نفس   العرض"},
+            {"id": 3, "content": "عرض مختلف"},
+        ]
+        update = SimpleNamespace(
+            effective_message=message,
+            effective_chat=message.chat,
+        )
+
+        with patch(
+            "handlers.ai_search.is_feature_enabled",
+            return_value=True,
+        ), patch(
+            "handlers.ai_search.parse_user_request",
+            return_value={"request_type": "product_best", "keywords": ["هاتف"]},
+        ), patch(
+            "handlers.ai_search.search_channel_posts",
+            return_value=posts,
+        ), patch(
+            "handlers.ai_search.send_stored_post",
+            new=AsyncMock(),
+        ) as send_post:
+            await handle_ai_search_message(update, context)
+
+        self.assertEqual(
+            context.user_data["ai_search_results"],
+            [posts[0], posts[2]],
+        )
+        send_post.assert_awaited_once_with(
+            message.chat.id,
+            context,
+            posts[0],
+            has_previous=False,
+            has_next=True,
+        )
+
+    async def test_uncertain_navigation_does_not_retry_same_result(self):
+        from handlers.ai_search import PhotoDeliveryUncertainError
+
+        context = FakeContext()
+        context.user_data.update({
+            "ai_search_results": [
+                {"id": 1, "content": "العرض الأول"},
+                {"id": 2, "content": "العرض الثاني"},
+            ],
+            "ai_search_index": 0,
+        })
+        message = SimpleNamespace(
+            chat=SimpleNamespace(id=123),
+            reply_text=AsyncMock(),
+        )
+        query = SimpleNamespace(message=message, answer=AsyncMock())
+
+        with patch(
+            "handlers.ai_search.is_feature_enabled",
+            return_value=True,
+        ), patch(
+            "handlers.ai_search._replace_stored_post_message",
+            new=AsyncMock(
+                side_effect=PhotoDeliveryUncertainError("response lost")
+            ),
+        ) as replace_post:
+            await ai_next_callback(
+                SimpleNamespace(callback_query=query),
+                context,
+            )
+
+        self.assertEqual(context.user_data["ai_search_index"], 1)
+        replace_post.assert_awaited_once()
+        message.reply_text.assert_awaited_once()
+
     @patch("core.ai._call_ai")
     def test_equivalent_phone_price_queries_use_provider_canonical_request(
         self,
@@ -1730,6 +1860,53 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(replace_post.await_count, 10)
             self.assertFalse(replace_post.await_args.kwargs["has_next"])
 
+    async def test_saved_category_search_deduplicates_displayed_offers(self):
+        context = FakeContext()
+        context.user_data["ai_search_active"] = True
+        message = FakeMessage()
+        category_index = next(
+            index
+            for index, (category, _label) in enumerate(
+                SAVED_OFFER_CATEGORY_FILTERS
+            )
+            if category == "saved_tablets"
+        )
+        posts = [
+            {"id": 20, "content": "Tablet offer"},
+            {"id": 21, "content": "Tablet   offer"},
+            {"id": 22, "content": "Another tablet offer"},
+        ]
+        query = SimpleNamespace(
+            answer=AsyncMock(),
+            data=f"saved_offers:category:{category_index}",
+            message=message,
+        )
+
+        with patch(
+            "handlers.ai_search.search_channel_posts",
+            return_value=posts,
+        ), patch(
+            "handlers.ai_search.send_stored_post",
+            new=AsyncMock(),
+        ) as send_post:
+            await saved_offers_callback(
+                SimpleNamespace(callback_query=query),
+                context,
+            )
+
+        self.assertEqual(
+            context.user_data["ai_search_results"],
+            [posts[0], posts[2]],
+        )
+        self.assertEqual(context.user_data["ai_search_index"], 0)
+        send_post.assert_awaited_once_with(
+            message.chat.id,
+            context,
+            posts[0],
+            has_previous=False,
+            has_next=True,
+        )
+
     def test_explicit_subcategories_map_to_one_saved_offer_filter(self):
         for expected_filter, names in SAVED_OFFER_CATEGORY_SUBCATEGORY_NAMES.items():
             for name in names:
@@ -2058,7 +2235,7 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
         )
         context.bot = SimpleNamespace(
             send_photo=AsyncMock(
-                side_effect=[RuntimeError("cached file id unavailable"), sent],
+                side_effect=[BadRequest("wrong file identifier"), sent],
             ),
             send_message=AsyncMock(),
         )
@@ -2181,7 +2358,7 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
         )
         context.bot = SimpleNamespace(
             send_photo=AsyncMock(
-                side_effect=[RuntimeError("saved URL unavailable"), sent],
+                side_effect=[BadRequest("saved URL unavailable"), sent],
             ),
             send_message=AsyncMock(),
         )

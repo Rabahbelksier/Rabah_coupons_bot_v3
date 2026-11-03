@@ -1569,6 +1569,10 @@ def claim_auto_publish_delivery(product_key, occurrence_count, source_post_id):
                           AND claimed_at >= CURRENT_TIMESTAMP
                               - INTERVAL '15 minutes'
                       )
+                      OR (
+                          status IN ('sending', 'uncertain')
+                          AND claimed_at::date = CURRENT_DATE
+                      )
                   )
                 """,
                 (source_post_id,),
@@ -1653,9 +1657,39 @@ def mark_auto_publish_delivery_published(delivery_id, telegram_message_id):
                 SET status = 'published',
                     published_at = CURRENT_TIMESTAMP,
                     telegram_message_id = %s
-                WHERE id = %s AND status = 'claimed'
+                WHERE id = %s AND status IN ('claimed', 'sending')
                 """,
                 (telegram_message_id, int(delivery_id)),
+            )
+            updated = cursor.rowcount > 0
+        conn.commit()
+        return updated
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def mark_auto_publish_delivery_sending(delivery_id):
+    """Persist the send boundary so a restarted worker cannot replay it."""
+    if not DATABASE_URL:
+        return False
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE auto_publish_deliveries
+                SET status = 'sending',
+                    claimed_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND status = 'claimed'
+                """,
+                (int(delivery_id),),
             )
             updated = cursor.rowcount > 0
         conn.commit()
@@ -1681,7 +1715,36 @@ def mark_auto_publish_delivery_failed(delivery_id):
                 """
                 UPDATE auto_publish_deliveries
                 SET status = 'failed'
-                WHERE id = %s AND status = 'claimed'
+                WHERE id = %s AND status IN ('claimed', 'sending')
+                """,
+                (int(delivery_id),),
+            )
+            updated = cursor.rowcount > 0
+        conn.commit()
+        return updated
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def mark_auto_publish_delivery_uncertain(delivery_id):
+    """Make an ambiguous Telegram send terminal instead of retrying it."""
+    if not DATABASE_URL:
+        return False
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE auto_publish_deliveries
+                SET status = 'uncertain'
+                WHERE id = %s AND status IN ('claimed', 'sending')
                 """,
                 (int(delivery_id),),
             )
@@ -1708,6 +1771,7 @@ def get_auto_publish_report():
         "failed_today": 0,
         "claimed": 0,
         "thresholds_today": 0,
+        "uncertain": 0,
     }
     if not DATABASE_URL:
         return empty
@@ -1744,11 +1808,14 @@ def get_auto_publish_report():
                         WHERE status = 'failed'
                           AND claimed_at::date = CURRENT_DATE
                     ),
-                    COUNT(*) FILTER (WHERE status = 'claimed'),
+                    COUNT(*) FILTER (
+                        WHERE status IN ('claimed', 'sending')
+                    ),
                     COUNT(*) FILTER (
                         WHERE status = 'published'
                           AND published_at::date = CURRENT_DATE
-                    )
+                    ),
+                    COUNT(*) FILTER (WHERE status = 'uncertain')
                 FROM auto_publish_deliveries
                 """
             )
@@ -1764,6 +1831,7 @@ def get_auto_publish_report():
                 "failed_today": int(row[5] or 0),
                 "claimed": int(row[6] or 0),
                 "thresholds_today": int(row[7] or 0),
+                "uncertain": int(row[8] or 0),
             }
     finally:
         if conn:
