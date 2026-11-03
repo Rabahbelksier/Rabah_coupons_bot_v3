@@ -22,9 +22,9 @@ ERROR_LOG_CLEANUP_INTERVAL_SECONDS = _optional_positive_int(
     60 * 60,
 )
 
-APP_KEY = os.getenv('APP_KEY')
-APP_SECRET = os.getenv('APP_SECRET')
-TRACKING_ID = os.getenv('TRACKING_ID')
+APP_KEY = os.getenv('APP_KEY') or os.getenv('ALIEXPRESS_APP_KEY')
+APP_SECRET = os.getenv('APP_SECRET') or os.getenv('ALIEXPRESS_APP_SECRET')
+TRACKING_ID = os.getenv('TRACKING_ID') or os.getenv('ALIEXPRESS_TRACKING_ID')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 # Prefer the explicitly configured external database when available. Replit's
 # DATABASE_URL is the built-in development database in this workspace.

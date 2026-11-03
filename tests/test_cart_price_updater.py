@@ -22,9 +22,21 @@ class CartPriceUpdaterTests(unittest.TestCase):
         apply_results,
     ):
         get_rows.return_value = [
-            {"id": 1, "linkcart": "https://aliexpress.com/item/100.html"},
-            {"id": 2, "linkcart": "https://aliexpress.com/item/100.html?copy=1"},
-            {"id": 3, "linkcart": "https://aliexpress.com/item/200.html"},
+            {
+                "id": 1,
+                "linkcart": "https://aliexpress.com/item/100.html",
+                "pricecart": "14.25",
+            },
+            {
+                "id": 2,
+                "linkcart": "https://aliexpress.com/item/100.html?copy=1",
+                "pricecart": "11.00",
+            },
+            {
+                "id": 3,
+                "linkcart": "https://aliexpress.com/item/200.html",
+                "pricecart": "5.00",
+            },
         ]
         extract_product_id.side_effect = ["100", "100", "200"]
         fetch_current_prices.return_value = {"100": Decimal("14.25")}
@@ -35,8 +47,18 @@ class CartPriceUpdaterTests(unittest.TestCase):
         fetch_current_prices.assert_called_once_with(["100", "200"])
         apply_results.assert_called_once_with(
             [
-                (1, "https://aliexpress.com/item/100.html", Decimal("14.25")),
-                (2, "https://aliexpress.com/item/100.html?copy=1", Decimal("14.25")),
+                (
+                    1,
+                    "https://aliexpress.com/item/100.html",
+                    Decimal("14.25"),
+                    False,
+                ),
+                (
+                    2,
+                    "https://aliexpress.com/item/100.html?copy=1",
+                    Decimal("14.25"),
+                    True,
+                ),
             ],
             [(3, "https://aliexpress.com/item/200.html")],
         )
@@ -54,8 +76,16 @@ class CartPriceUpdaterTests(unittest.TestCase):
         apply_results,
     ):
         rows = [
-            {"id": 7, "linkcart": "https://aliexpress.com/item/700.html"},
-            {"id": 8, "linkcart": "https://aliexpress.com/item/800.html"},
+            {
+                "id": 7,
+                "linkcart": "https://aliexpress.com/item/700.html",
+                "pricecart": "1.00",
+            },
+            {
+                "id": 8,
+                "linkcart": "https://aliexpress.com/item/800.html",
+                "pricecart": "2.00",
+            },
         ]
         get_rows.return_value = rows
         extract_product_id.side_effect = ["700", "800"]

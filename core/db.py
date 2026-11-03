@@ -3395,14 +3395,14 @@ def get_cart_price_refresh_rows():
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT id, linkcart
+                SELECT id, linkcart, pricecart
                 FROM cart
                 WHERE linkcart IS NOT NULL AND BTRIM(linkcart) <> ''
                 ORDER BY id
             """)
             return [
-                {"id": row_id, "linkcart": link}
-                for row_id, link in cursor.fetchall()
+                {"id": row_id, "linkcart": link, "pricecart": price}
+                for row_id, link, price in cursor.fetchall()
             ]
     finally:
         if conn:
@@ -3421,22 +3421,35 @@ def apply_cart_price_refresh_results(successful_rows, failed_rows):
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
-            for row_id, link, price in successful_rows:
-                cursor.execute(
-                    """
-                    UPDATE cart
-                    SET pricecart = %s,
-                        pricecart_refresh_failed = FALSE
-                    WHERE id = %s
-                      AND linkcart IS NOT DISTINCT FROM %s
-                      AND (
-                          pricecart IS DISTINCT FROM %s
-                          OR pricecart_refresh_failed IS DISTINCT FROM FALSE
-                      )
-                    """,
-                    (price, row_id, link, price),
-                )
-                updated_prices += cursor.rowcount
+            for row_id, link, price, price_changed in successful_rows:
+                if price_changed:
+                    price_text = str(price)
+                    cursor.execute(
+                        """
+                        UPDATE cart
+                        SET pricecart = %s,
+                            pricecart_refresh_failed = FALSE
+                        WHERE id = %s
+                          AND linkcart IS NOT DISTINCT FROM %s
+                          AND (
+                              pricecart IS DISTINCT FROM %s
+                              OR pricecart_refresh_failed IS DISTINCT FROM FALSE
+                          )
+                        """,
+                        (price_text, row_id, link, price_text),
+                    )
+                    updated_prices += cursor.rowcount
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE cart
+                        SET pricecart_refresh_failed = FALSE
+                        WHERE id = %s
+                          AND linkcart IS NOT DISTINCT FROM %s
+                          AND pricecart_refresh_failed IS DISTINCT FROM FALSE
+                        """,
+                        (row_id, link),
+                    )
 
             for row_id, link in failed_rows:
                 cursor.execute(

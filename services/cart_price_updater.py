@@ -7,6 +7,7 @@ from core.db import (
     apply_cart_price_refresh_results,
     get_cart_price_refresh_rows,
 )
+from core.coupons import parse_numeric_value
 from core.product_prices import fetch_current_prices
 from utils.parser import extract_product_id
 
@@ -51,7 +52,11 @@ def refresh_cart_prices():
         if price is None:
             failed_rows.append((row["id"], row["linkcart"]))
         else:
-            successful_rows.append((row["id"], row["linkcart"], price))
+            saved_price = parse_numeric_value(row.get("pricecart"))
+            price_changed = saved_price != price
+            successful_rows.append(
+                (row["id"], row["linkcart"], price, price_changed)
+            )
 
     result = apply_cart_price_refresh_results(successful_rows, failed_rows)
     logger.info(
