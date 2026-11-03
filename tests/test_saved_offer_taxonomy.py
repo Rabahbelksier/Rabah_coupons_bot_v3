@@ -126,3 +126,35 @@ class SavedOfferTaxonomyTests(unittest.TestCase):
                 [],
             )
         )
+
+    def test_dedicated_bluetooth_and_smart_watch_categories_are_not_electronics(self):
+        electronics_intent = {
+            "request_type": "trending",
+            "keywords": [],
+            "saved_subcategory": "saved_electronics",
+        }
+        for dedicated_category in ("bluetooth_headphones", "smart_watches"):
+            with self.subTest(category=dedicated_category):
+                self.assertIsNone(
+                    _post_match_score(
+                        {
+                            "category": dedicated_category,
+                            "second_level_category_name": (
+                                "Earphones & Headphones"
+                            ),
+                        },
+                        electronics_intent,
+                        [],
+                    )
+                )
+
+        self.assertIsNotNone(
+            _post_match_score(
+                {
+                    "category": "headphones",
+                    "second_level_category_name": "Earphones & Headphones",
+                },
+                electronics_intent,
+                [],
+            )
+        )

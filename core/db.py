@@ -1939,6 +1939,14 @@ def search_channel_posts(intent, limit=None):
             else list(posts)[:result_limit]
         )
 
+    if _frequency_order_requested(intent):
+        return _rank_filtered_trending_posts(
+            posts,
+            intent,
+            keywords,
+            result_limit,
+        )
+
     ranked_posts = []
     for position, post in enumerate(posts):
         match_score = _post_match_score(post, intent, keywords)
@@ -2192,10 +2200,7 @@ def _broad_search_order_key(
             _post_recency_order_key(post, intent, 1.0, position),
         )
 
-    if (
-        intent.get("request_type") == "trending"
-        and intent.get("trending_order") == "frequency"
-    ):
+    if _frequency_order_requested(intent):
         if occurrence_count is None:
             occurrence_count = post.get("product_occurrence_count")
         try:
@@ -2222,12 +2227,34 @@ def _broad_search_sql_order(intent):
         "CASE WHEN published_at IS NULL THEN id END DESC, "
         "price ASC NULLS LAST, id DESC"
     )
-    if (
-        intent.get("request_type") == "trending"
-        and intent.get("trending_order") == "frequency"
-    ):
+    if _frequency_order_requested(intent):
         return f"product_occurrence_count DESC, {recency_order}", []
     return f"price ASC NULLS LAST, {recency_order}", []
+
+
+def _frequency_order_requested(intent):
+    """Use frequency for category, broad-brand, and explicit trend searches."""
+    if str(intent.get("trending_order") or "").casefold() == "frequency":
+        return True
+
+    request_type = intent.get("request_type")
+    if request_type in {"category_cheapest", "category_price_range"}:
+        return bool(intent.get("category") or intent.get("official_categories"))
+
+    if request_type == "trending" and (
+        intent.get("saved_category") or intent.get("saved_subcategory")
+    ):
+        return True
+
+    if request_type in _PRODUCT_REQUEST_TYPES | {"trending"}:
+        keywords = [
+            str(keyword).strip()
+            for keyword in intent.get("keywords", [])
+            if str(keyword).strip()
+        ]
+        return _is_broad_product_request(intent, keywords)
+
+    return False
 
 
 def _post_recency_order_key(post, intent=None, match_score=1.0, position=0):
@@ -2762,6 +2789,12 @@ def _official_categories_match(post, requested_categories):
 def _saved_subcategory_matches(post, requested_subcategory):
     if not requested_subcategory:
         return True
+    if (
+        requested_subcategory == "saved_electronics"
+        and str(post.get("category") or "").casefold().strip()
+        in SAVED_OFFER_CATEGORY_COLUMN_FILTERS
+    ):
+        return False
     return (
         saved_offer_filter_from_subcategory(
             post.get("second_level_category_name")

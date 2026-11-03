@@ -2,7 +2,7 @@
 - [Gemini quota handling](gemini-quota-handling.md) — model quotas can differ; switch models on 429 instead of retrying one exhausted model indefinitely.
 - [Telethon session exclusivity](telethon-session-exclusivity.md) — one StringSession cannot safely serve workers from different IP addresses.
 - [Python package setup](python-package-setup.md) — package installation can rewrite dependency files and workspace state; re-check the diff before finalizing code changes.
-- [AI intent composition](ai-intent-composition.md) — preserve filters; broad results use newest product offers, with explicit prominent-today requests ranked by frequency.
+- [AI intent composition](ai-intent-composition.md) — preserve filters; category and broad-brand results rank newest product offers by frequency, while specific products keep their own ordering.
 - [Channel-offer category keys](channel-offer-category-keys.md) — keep AI's Bluetooth and smart-watch labels in the internal category field; preserve AliExpress taxonomy separately.
 - [Webhook startup readiness](webhook-startup-readiness.md) — initialize the Telegram application before serving webhooks; keep optional services off the first-response path.
 - [AI provider failover state](ai-provider-failover-state.md) — quarantine quota/config failures only; keep transient failures request-scoped and preserve typed exhaustion across requests.

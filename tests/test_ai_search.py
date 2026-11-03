@@ -3194,6 +3194,108 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
+    @patch.object(db, "_post_match_score", return_value=1.0)
+    def test_category_and_brand_searches_rank_newest_representatives_by_frequency(
+        self,
+        _match_score,
+        get_connection,
+    ):
+        cursor = get_connection.return_value.cursor.return_value.__enter__.return_value
+        cursor.description = [
+            (name,) for name in (
+                "id",
+                "title",
+                "price",
+                "content",
+                "processing_status",
+                "source_link",
+                "published_at",
+                "photo_file_id",
+                "link_img",
+                "source_channel_id",
+                "source_message_id",
+                "aliexpress_product_id",
+                "shipping_country",
+                "offer_type",
+                "category",
+                "first_level_category_name",
+                "second_level_category_name",
+            )
+        ]
+        rows = [
+            (
+                1, "Product A", 10, "", "processed", None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc), None, None,
+                None, None, "product-a", None, "normal", "phones", None, None,
+            ),
+            (
+                2, "Product A", 12, "", "processed", None,
+                datetime(2025, 1, 3, tzinfo=timezone.utc), None, None,
+                None, None, "product-a", None, "normal", "phones", None, None,
+            ),
+            (
+                3, "Product B", 8, "", "processed", None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc), None, None,
+                None, None, "product-b", None, "normal", "phones", None, None,
+            ),
+            (
+                4, "Product B", 9, "", "processed", None,
+                datetime(2025, 1, 2, tzinfo=timezone.utc), None, None,
+                None, None, "product-b", None, "normal", "phones", None, None,
+            ),
+            (
+                5, "Product B", 11, "", "processed", None,
+                datetime(2025, 1, 4, tzinfo=timezone.utc), None, None,
+                None, None, "product-b", None, "normal", "phones", None, None,
+            ),
+        ]
+        cursor.fetchall.side_effect = [rows, rows]
+
+        category_results = db.search_channel_posts({
+            "request_type": "category_cheapest",
+            "keywords": ["phones"],
+            "category": "phones",
+        })
+        brand_results = db.search_channel_posts({
+            "request_type": "product_best",
+            "keywords": ["samsung"],
+            "category": "phones",
+        })
+
+        self.assertEqual([post["id"] for post in category_results], [5, 2])
+        self.assertEqual([post["id"] for post in brand_results], [5, 2])
+
+    def test_frequency_order_is_limited_to_category_and_broad_brand_requests(self):
+        self.assertTrue(db._frequency_order_requested({
+            "request_type": "category_price_range",
+            "category": "phones",
+        }))
+        self.assertTrue(db._frequency_order_requested({
+            "request_type": "product_best",
+            "keywords": ["samsung"],
+            "category": "phones",
+        }))
+        self.assertFalse(db._frequency_order_requested({
+            "request_type": "product_best",
+            "keywords": ["samsung galaxy s25 ultra"],
+            "category": "phones",
+        }))
+        self.assertTrue(db._frequency_order_requested({
+            "request_type": "product_best",
+            "keywords": ["camera"],
+        }))
+        self.assertFalse(db._frequency_order_requested({
+            "request_type": "product_best",
+            "keywords": ["portable mini washer"],
+            "category": "home",
+        }))
+        self.assertTrue(db._frequency_order_requested({
+            "request_type": "trending",
+            "saved_subcategory": "saved_electronics",
+        }))
+
+    @patch.object(db, "DATABASE_URL", "postgres://test")
+    @patch.object(db, "get_db_connection")
     def test_filtered_trending_search_applies_category_before_grouping(
         self,
         get_connection,
@@ -3604,7 +3706,7 @@ class DatabaseSearchTests(unittest.TestCase):
             limit=10,
         )
 
-        self.assertEqual([post["id"] for post in result], [2, 1])
+        self.assertEqual([post["id"] for post in result], [1, 2])
 
     def test_category_search_requires_all_explicit_phone_specs(self):
         from core.db import _post_match_score
