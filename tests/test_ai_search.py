@@ -33,6 +33,7 @@ from handlers.ai_search import (
     SAVED_OFFERS_MAIN_BUTTONS,
     SAVED_OFFERS_MENU_TEXT,
     SAVED_OFFERS_PHONE_BRANDS,
+    SAVED_OFFERS_PROMINENT_BUTTON_TEXT,
     SAVED_OFFERS_PHONE_TEXT,
     SAVED_OFFERS_BACK_BUTTON_TEXT,
     _clear_ai_search_state,
@@ -880,6 +881,30 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(context.user_data["ai_search_active"])
 
+    async def test_added_phone_brands_use_existing_saved_filter(self):
+        for brand in ("Moto", "Huawei", "Oneplus", "Nubia", "Cubot", "OUKITEL"):
+            with self.subTest(brand=brand):
+                context = FakeContext()
+                context.user_data.update({
+                    "ai_search_active": True,
+                    "saved_offers_menu": "phones",
+                })
+                message = FakeMessage(f"{brand}\u2063")
+
+                with patch(
+                    "handlers.ai_search.search_channel_posts",
+                    return_value=[],
+                ) as search_posts:
+                    handled = await handle_saved_offers_reply_message(
+                        SimpleNamespace(effective_message=message),
+                        context,
+                    )
+
+                self.assertTrue(handled)
+                search_posts.assert_called_once_with(
+                    _saved_offer_intent("brand", brand.casefold())
+                )
+
     async def test_message_router_handles_marked_tap_before_ai_search(self):
         context = FakeContext()
         context.user_data.update({
@@ -928,6 +953,11 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
                 "main",
                 SAVED_OFFERS_MAIN_BUTTONS[2],
                 _saved_offer_intent("bundle"),
+            ),
+            (
+                "main",
+                SAVED_OFFERS_PROMINENT_BUTTON_TEXT,
+                _saved_offer_intent("prominent"),
             ),
             (
                 "categories",
@@ -1087,7 +1117,9 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
             [
                 list(SAVED_OFFERS_PHONE_BRANDS[:3]),
                 list(SAVED_OFFERS_PHONE_BRANDS[3:6]),
-                list(SAVED_OFFERS_PHONE_BRANDS[6:]),
+                list(SAVED_OFFERS_PHONE_BRANDS[6:9]),
+                list(SAVED_OFFERS_PHONE_BRANDS[9:12]),
+                list(SAVED_OFFERS_PHONE_BRANDS[12:]),
                 [SAVED_OFFERS_BACK_BUTTON_TEXT],
             ],
         )

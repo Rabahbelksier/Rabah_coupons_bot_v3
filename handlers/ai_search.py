@@ -100,12 +100,20 @@ SAVED_OFFERS_PHONE_BRANDS = (
     "Oppo",
     "Vivo",
     "Blackview",
+    "Moto",
+    "Huawei",
+    "Oneplus",
+    "Nubia",
+    "Cubot",
+    "OUKITEL",
 )
+SAVED_OFFERS_PROMINENT_BUTTON_TEXT = "أبرز العروض"
 SAVED_OFFERS_MAIN_BUTTONS = (
     "عروض هواتف",
     "تشحن نحو فرنسا",
     "عروض الباندل",
     "عروض اخرى",
+    SAVED_OFFERS_PROMINENT_BUTTON_TEXT,
 )
 SAVED_OFFERS_BACK_BUTTON_TEXT = "رجوع"
 _SAVED_OFFERS_BUTTON_MARKER = "\u2063"
@@ -274,6 +282,11 @@ def _saved_offer_intent(kind, value=None):
         return {
             **intent,
             "shipping_country": "France",
+        }
+    if kind == "prominent":
+        return {
+            **intent,
+            "trending_order": "frequency",
         }
     if kind == "bundle":
         return {
@@ -913,6 +926,7 @@ def _saved_offers_callback_data_for_reply_label(label, menu):
             SAVED_OFFERS_MAIN_BUTTONS[1]: "saved_offers:shipping",
             SAVED_OFFERS_MAIN_BUTTONS[2]: "saved_offers:bundle",
             SAVED_OFFERS_MAIN_BUTTONS[3]: "saved_offers:other",
+            SAVED_OFFERS_PROMINENT_BUTTON_TEXT: "saved_offers:prominent",
         }.get(label)
 
     if menu == "phones":
@@ -1152,6 +1166,13 @@ async def _dispatch_saved_offers_action(message, context, data):
             message,
             context,
             _saved_offer_intent("bundle"),
+        )
+        return
+    if data == "saved_offers:prominent":
+        await _search_saved_offers(
+            message,
+            context,
+            _saved_offer_intent("prominent"),
         )
         return
     if data == "saved_offers:back:main":
