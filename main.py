@@ -56,6 +56,7 @@ from core.ai import (
 )
 from services.channel_monitor import ChannelMonitor
 from services.auto_publisher import AutoPublisher
+from services.cart_price_updater import cart_price_updater
 from services.telegram_runtime import TelegramRuntime
 from utils.error_logging import install_error_log_handler
 
@@ -215,12 +216,20 @@ def _stop_background_services():
         auto_publisher.stop()
     except Exception:
         logger.exception("Automatic publisher shutdown failed")
+    try:
+        cart_price_updater.stop()
+    except Exception:
+        logger.exception("Cart price updater shutdown failed")
 
 
 def _on_telegram_ready(application):
     global _gemini_phrase_cache_startup_scheduled
     application.bot_data["channel_monitor"] = channel_monitor
     application.bot_data["auto_publisher"] = auto_publisher
+    try:
+        cart_price_updater.start()
+    except Exception:
+        logger.exception("Cart price updater startup failed")
     try:
         start_ai_service_background_worker()
     except Exception:

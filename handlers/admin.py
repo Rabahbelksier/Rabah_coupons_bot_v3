@@ -128,8 +128,15 @@ def format_cart_row(row):
         link_value = "link"
         escaped_visible_url = "-"
 
+    raw_id = _format_value(row.get("id"))
+    refresh_failed = row.get("pricecart_refresh_failed") is True or str(
+        row.get("pricecart_refresh_failed", "")
+    ).strip().lower() in {"1", "true", "t", "yes"}
+    if refresh_failed and not raw_id.startswith("00"):
+        raw_id = f"00{raw_id}"
+
     values = [
-        _format_value(row.get("id")),
+        raw_id,
         link_value,
         _format_value(row.get("pricecart")),
         _format_value(row.get("pricefinalecart")),
@@ -148,7 +155,7 @@ def format_cart_row(row):
     return f"{row_line}\n{url_line}"
 
 
-def admin_actions_keyboard(row_ids=()):
+def admin_actions_keyboard(row_ids=(), *, include_navigation=True):
     rows = [
         [
             InlineKeyboardButton(
@@ -158,10 +165,11 @@ def admin_actions_keyboard(row_ids=()):
         ]
         for row_id in row_ids
     ]
-    rows.extend([
-        [InlineKeyboardButton("إضافة", callback_data="admin_add")],
-        [InlineKeyboardButton("العودة إلى القائمة", callback_data="admin_menu")],
-    ])
+    if include_navigation:
+        rows.extend([
+            [InlineKeyboardButton("إضافة", callback_data="admin_add")],
+            [InlineKeyboardButton("العودة إلى القائمة", callback_data="admin_menu")],
+        ])
     return InlineKeyboardMarkup(rows)
 
 
@@ -890,44 +898,62 @@ async def _sync_channel_monitor(context, enabled):
         logger.exception("Could not sync channel monitor with AI feature state")
 
 
-async def send_admin_cart(message, *, edit=False):
-    """Render the cart and all of its actions in one message."""
-    rows = await asyncio.to_thread(get_admin_cart_rows)
-    text, keyboard = _admin_cart_payload(rows)
-    await _render_admin_message(
-        message,
-        text,
-        reply_markup=keyboard,
-        edit=edit,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
-
-
-def _admin_cart_payload(rows, notice=None):
+def _admin_cart_messages(rows, notice=None):
+    """Build one row per message, keeping each edit button beside its row."""
     if not rows:
         text = "لا توجد أسطر حاليا في جدول cart."
-    else:
-        text = "جدول cart:\n\n" + "\n\n".join(
-            format_cart_row(row)
-            for row in rows
+        if notice:
+            text = f"{notice}\n\n{text}"
+        return [(text, admin_actions_keyboard())]
+
+    messages = []
+    for index, row in enumerate(rows):
+        text = format_cart_row(row)
+        if index == 0:
+            text = f"جدول cart:\n\n{text}"
+            if notice:
+                text = f"{notice}\n\n{text}"
+        keyboard = admin_actions_keyboard(
+            [row["id"]],
+            include_navigation=index == len(rows) - 1,
         )
-    if notice:
-        text = f"{notice}\n\n{text}"
-    return text, admin_actions_keyboard(row["id"] for row in rows)
+        messages.append((text, keyboard))
+    return messages
+
+
+async def send_admin_cart(message, *, edit=False):
+    """Render each cart row in its own message with its matching edit button."""
+    rows = await asyncio.to_thread(get_admin_cart_rows)
+    for index, (text, keyboard) in enumerate(_admin_cart_messages(rows)):
+        await _render_admin_message(
+            message,
+            text,
+            reply_markup=keyboard,
+            edit=edit and index == 0,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
 
 async def _edit_admin_cart_message(bot, state, notice=None):
     rows = await asyncio.to_thread(get_admin_cart_rows)
-    text, keyboard = _admin_cart_payload(rows, notice=notice)
-    await bot.edit_message_text(
-        chat_id=state["chat_id"],
-        message_id=state["message_id"],
-        text=text,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=keyboard,
-    )
+    for index, (text, keyboard) in enumerate(
+        _admin_cart_messages(rows, notice=notice)
+    ):
+        kwargs = {
+            "chat_id": state["chat_id"],
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": keyboard,
+        }
+        if index == 0:
+            await bot.edit_message_text(
+                message_id=state["message_id"],
+                **kwargs,
+            )
+        else:
+            await bot.send_message(**kwargs)
 
 
 async def send_activity_menu(message, *, edit=False):

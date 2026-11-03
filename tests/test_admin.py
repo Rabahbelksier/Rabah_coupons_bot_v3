@@ -41,6 +41,7 @@ from handlers.admin import (
     logs_keyboard,
     _render_admin_message,
     send_feature_status,
+    send_admin_cart,
     send_admin_menu,
     send_admin_users_menu,
     send_logs_report,
@@ -1802,6 +1803,79 @@ class AdminCartTests(unittest.TestCase):
             message,
         )
         self.assertIn("| 45.2 | 20 | 2 | 0", message)
+
+    def test_failed_price_refresh_marks_id_without_repeating_prefix(self):
+        row = {
+            "id": 1,
+            "linkcart": "https://example.com/item",
+            "pricecart": Decimal("45.2"),
+            "pricefinalecart": Decimal("20"),
+            "stor": Decimal("2"),
+            "ship": Decimal("0"),
+            "pricecart_refresh_failed": True,
+        }
+        self.assertIn("001 |", format_cart_row(row))
+
+        row["id"] = "006"
+        self.assertIn("006 |", format_cart_row(row))
+        self.assertNotIn("0006 |", format_cart_row(row))
+
+    @patch(
+        "handlers.admin.get_admin_cart_rows",
+        return_value=[
+            {
+                "id": 1,
+                "linkcart": "https://example.com/one",
+                "pricecart": Decimal("10"),
+                "pricefinalecart": Decimal("5"),
+                "stor": Decimal("1"),
+                "ship": Decimal("0"),
+                "pricecart_refresh_failed": False,
+            },
+            {
+                "id": 2,
+                "linkcart": "https://example.com/two",
+                "pricecart": Decimal("20"),
+                "pricefinalecart": Decimal("9"),
+                "stor": Decimal("2"),
+                "ship": Decimal("0"),
+                "pricecart_refresh_failed": False,
+            },
+        ],
+    )
+    def test_admin_cart_sends_one_row_with_its_own_edit_button(self, get_rows):
+        message = SimpleNamespace(
+            edit_text=AsyncMock(),
+            reply_text=AsyncMock(),
+        )
+
+        async def run():
+            await send_admin_cart(message, edit=True)
+
+        import asyncio
+        asyncio.run(run())
+
+        get_rows.assert_called_once_with()
+        message.edit_text.assert_awaited_once()
+        message.reply_text.assert_awaited_once()
+
+        first_text = message.edit_text.await_args.args[0]
+        first_keyboard = message.edit_text.await_args.kwargs["reply_markup"]
+        second_text = message.reply_text.await_args.args[0]
+        second_keyboard = message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertIn("https://example.com/one", first_text)
+        self.assertNotIn("https://example.com/two", first_text)
+        self.assertIn("https://example.com/two", second_text)
+        self.assertNotIn("https://example.com/one", second_text)
+        self.assertEqual(
+            first_keyboard.inline_keyboard[0][0].callback_data,
+            "admin_edit_1",
+        )
+        self.assertEqual(
+            second_keyboard.inline_keyboard[0][0].callback_data,
+            "admin_edit_2",
+        )
+        self.assertEqual(second_keyboard.inline_keyboard[-1][0].callback_data, "admin_menu")
 
     def test_rejects_a_row_with_the_wrong_number_of_columns(self):
         with self.assertRaises(ValueError):

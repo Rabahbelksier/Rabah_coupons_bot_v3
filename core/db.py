@@ -317,6 +317,11 @@ def init_db():
             ADD COLUMN IF NOT EXISTS ship NUMERIC(12, 2)
         """)
         cur.execute("""
+            ALTER TABLE IF EXISTS cart
+            ADD COLUMN IF NOT EXISTS pricecart_refresh_failed
+            BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS telegram_channels (
                 id BIGSERIAL PRIMARY KEY,
                 link TEXT NOT NULL UNIQUE
@@ -3348,7 +3353,8 @@ def get_admin_cart_row(row_id):
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, linkcart, pricecart, pricefinalecart, stor, ship
+                SELECT id, linkcart, pricecart, pricefinalecart, stor, ship,
+                       pricecart_refresh_failed
                 FROM cart WHERE id = %s
                 """,
                 (row_id,),
@@ -3370,12 +3376,89 @@ def get_admin_cart_rows():
         conn = get_db_connection()
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT id, linkcart, pricecart, pricefinalecart, stor, ship
+                SELECT id, linkcart, pricecart, pricefinalecart, stor, ship,
+                       pricecart_refresh_failed
                 FROM cart
                 ORDER BY id
             """)
             columns = [description[0] for description in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_cart_price_refresh_rows():
+    """Return cart rows that have a URL for the scheduled price refresh."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, linkcart
+                FROM cart
+                WHERE linkcart IS NOT NULL AND BTRIM(linkcart) <> ''
+                ORDER BY id
+            """)
+            return [
+                {"id": row_id, "linkcart": link}
+                for row_id, link in cursor.fetchall()
+            ]
+    finally:
+        if conn:
+            conn.close()
+
+
+def apply_cart_price_refresh_results(successful_rows, failed_rows):
+    """Apply refreshed prices and failure markers atomically.
+
+    Each entry is a (row id, original link, price) tuple for successful rows,
+    or a (row id, original link) tuple for rows that could not be priced.
+    """
+    conn = None
+    updated_prices = 0
+    marked_failed = 0
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            for row_id, link, price in successful_rows:
+                cursor.execute(
+                    """
+                    UPDATE cart
+                    SET pricecart = %s,
+                        pricecart_refresh_failed = FALSE
+                    WHERE id = %s
+                      AND linkcart IS NOT DISTINCT FROM %s
+                      AND (
+                          pricecart IS DISTINCT FROM %s
+                          OR pricecart_refresh_failed IS DISTINCT FROM FALSE
+                      )
+                    """,
+                    (price, row_id, link, price),
+                )
+                updated_prices += cursor.rowcount
+
+            for row_id, link in failed_rows:
+                cursor.execute(
+                    """
+                    UPDATE cart
+                    SET pricecart_refresh_failed = TRUE
+                    WHERE id = %s
+                      AND linkcart IS NOT DISTINCT FROM %s
+                      AND pricecart_refresh_failed IS DISTINCT FROM TRUE
+                    """,
+                    (row_id, link),
+                )
+                marked_failed += cursor.rowcount
+        conn.commit()
+        return {
+            "updated_prices": updated_prices,
+            "marked_failed": marked_failed,
+        }
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
     finally:
         if conn:
             conn.close()
@@ -3408,7 +3491,8 @@ def update_cart_row(row_id, link, price, final_price, stor, shipping):
                 pricecart = %s,
                 pricefinalecart = %s,
                 stor = %s,
-                ship = %s
+                ship = %s,
+                pricecart_refresh_failed = FALSE
             WHERE id = %s
         """,
         (link, price, final_price, stor, shipping, row_id),
@@ -3422,8 +3506,9 @@ def insert_cart_row(row_id, link, price, final_price, stor, shipping):
     _run_cart_mutation(
         """
             INSERT INTO cart
-                (id, linkcart, pricecart, pricefinalecart, stor, ship)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (id, linkcart, pricecart, pricefinalecart, stor, ship,
+                 pricecart_refresh_failed)
+            VALUES (%s, %s, %s, %s, %s, %s, FALSE)
         """,
         (row_id, link, price, final_price, stor, shipping),
     )
