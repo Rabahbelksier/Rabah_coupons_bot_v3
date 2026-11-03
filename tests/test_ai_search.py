@@ -3056,6 +3056,69 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
+    def test_prominent_trending_orders_newest_representatives_by_frequency(
+        self,
+        get_connection,
+    ):
+        connection = get_connection.return_value
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.description = [
+            (name,) for name in (
+                "id",
+                "title",
+                "price",
+                "content",
+                "processing_status",
+                "source_link",
+                "published_at",
+                "photo_file_id",
+                "link_img",
+                "source_channel_id",
+                "source_message_id",
+                "aliexpress_product_id",
+                "shipping_country",
+                "offer_type",
+                "category",
+                "first_level_category_name",
+                "second_level_category_name",
+                "product_occurrence_count",
+            )
+        ]
+        cursor.fetchall.return_value = [
+            (
+                1, "Product A", 10, "", "processed", None,
+                datetime(2025, 1, 3, tzinfo=timezone.utc), None, None,
+                None, None, "product-a", None, "normal", None, None, None, 2,
+            ),
+            (
+                2, "Product B", 12, "", "processed", None,
+                datetime(2025, 1, 2, tzinfo=timezone.utc), None, None,
+                None, None, "product-b", None, "normal", None, None, None, 5,
+            ),
+            (
+                3, "Product C", 8, "", "processed", None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc), None, None,
+                None, None, "product-c", None, "normal", None, None, None, 3,
+            ),
+        ]
+
+        result = db.search_channel_posts(
+            {
+                "request_type": "trending",
+                "trending_order": "frequency",
+            },
+            limit=2,
+        )
+
+        self.assertEqual([post["id"] for post in result], [2, 3])
+        query, params = cursor.execute.call_args.args
+        self.assertIn("COUNT(*) OVER", query)
+        self.assertIn("product_occurrence_count DESC", query)
+        self.assertIn("WHERE product_rank = 1", query)
+        self.assertEqual(params, [2])
+
+    @patch.object(db, "DATABASE_URL", "postgres://test")
+    @patch.object(db, "get_db_connection")
     @patch.object(db, "_post_match_score", return_value=1.0)
     def test_unlimited_product_search_returns_all_posts_newest_first(
         self,
@@ -3342,6 +3405,69 @@ class DatabaseSearchTests(unittest.TestCase):
         )
 
         self.assertEqual([post["id"] for post in result], [3, 2, 1])
+
+    @patch.object(db, "_post_match_score", return_value=1.0)
+    def test_filtered_prominent_trending_counts_matches_and_keeps_newest(
+        self,
+        _match_score,
+    ):
+        posts = [
+            {
+                "id": 1,
+                "title": "Product Alpha",
+                "aliexpress_product_id": "alpha",
+                "price": 10,
+                "published_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+            {
+                "id": 2,
+                "title": "Product Alpha",
+                "aliexpress_product_id": "alpha",
+                "price": 12,
+                "published_at": datetime(2025, 1, 3, tzinfo=timezone.utc),
+            },
+            {
+                "id": 3,
+                "title": "Product Beta",
+                "aliexpress_product_id": "beta",
+                "price": 8,
+                "published_at": datetime(2025, 1, 2, tzinfo=timezone.utc),
+            },
+            {
+                "id": 4,
+                "title": "Product Gamma",
+                "aliexpress_product_id": "gamma",
+                "price": 9,
+                "published_at": datetime(2025, 1, 4, tzinfo=timezone.utc),
+            },
+            {
+                "id": 5,
+                "title": "Product Gamma",
+                "aliexpress_product_id": "gamma",
+                "price": 9,
+                "published_at": datetime(2025, 1, 5, tzinfo=timezone.utc),
+            },
+            {
+                "id": 6,
+                "title": "Product Gamma",
+                "aliexpress_product_id": "gamma",
+                "price": 9,
+                "published_at": datetime(2025, 1, 6, tzinfo=timezone.utc),
+            },
+        ]
+
+        result = db._rank_filtered_trending_posts(
+            posts,
+            {
+                "request_type": "trending",
+                "category": "phones",
+                "trending_order": "frequency",
+            },
+            [],
+            None,
+        )
+
+        self.assertEqual([post["id"] for post in result], [6, 2, 3])
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")

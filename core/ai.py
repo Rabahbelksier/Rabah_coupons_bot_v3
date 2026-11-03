@@ -1415,6 +1415,16 @@ def _infer_request_category_from_text(text):
     return _infer_request_category(words)
 
 
+def _is_prominent_offers_request(text):
+    normalized_text = str(text or "").casefold()
+    return bool(
+        re.search(
+            r"(?:أبرز|ابرز)\s+(?:ال)?عروض.*(?:اليوم|حاليا|حاليًا)",
+            normalized_text,
+        )
+    )
+
+
 def _normalize_user_request_result(
     result,
     text,
@@ -1716,6 +1726,11 @@ def _normalize_user_request_result(
         normalized["target_price"] = target_price
     if shipping_country:
         normalized["shipping_country"] = shipping_country
+    if request_type == "trending" and (
+        str(result.get("trending_order") or "").casefold() == "frequency"
+        or _is_prominent_offers_request(text)
+    ):
+        normalized["trending_order"] = "frequency"
     return ChannelAnalysis(
         normalized,
         ai_provider=ai_provider,
@@ -3218,6 +3233,7 @@ Consumer Electronics. لا تصنف المنتج كهاتف لمجرد وجود 
   "price_mode": null,
   "target_price": null,
   "shipping_country": null,
+  "trending_order": null,
    "offer_type": null,
   "required_specs": []
 }}
@@ -3239,6 +3255,10 @@ Consumer Electronics. لا تصنف المنتج كهاتف لمجرد وجود 
 - افهم الصيغ الدارجة مثل "سعرها يفوق"، "سعرها يتراوح بين"، "بأقل سعر"،
   ورمز العملة قبل الرقم مثل $100.
 - "أحسن عروض اليوم" و"أبرز عروض اليوم" طلبات trending عامة.
+- عند طلب "أبرز عروض اليوم" تحديدًا، أعد trending_order="frequency":
+  يعرض أحدث منشور لكل منتج ثم يرتب المنتجات حسب عدد مرات ظهورها في جدول
+  statu من الأكثر تكرارًا إلى الأقل. لبقية طلبات trending اجعل
+  trending_order=null.
 - طلب السعر فقط مثل "منتجات أقل من $100"، أو الشحن فقط مثل
   "عروض الشحن نحو فرنسا"، هو trending مع فلتر السعر أو shipping_country.
 - طلب السعر القريب العام مثل "أريد عروضًا في حدود 100$" هو trending مع

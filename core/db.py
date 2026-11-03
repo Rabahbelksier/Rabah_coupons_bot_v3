@@ -1852,6 +1852,8 @@ def search_channel_posts(intent, limit=None):
                 )
                 limit_clause = ""
                 query_params = list(params)
+                order_clause, order_params = _broad_search_sql_order(intent)
+                query_params.extend(order_params)
                 if result_limit is not None:
                     limit_clause = "LIMIT %s"
                     query_params.append(result_limit)
@@ -1865,6 +1867,9 @@ def search_channel_posts(intent, limit=None):
                                  shipping_country, offer_type, category,
                                  first_level_category_name,
                                    second_level_category_name,
+                                COUNT(*) OVER (
+                                    PARTITION BY {product_key}
+                                ) AS product_occurrence_count,
                                ROW_NUMBER() OVER (
                                    PARTITION BY {product_key}
                                     ORDER BY published_at DESC NULLS LAST,
@@ -1882,14 +1887,11 @@ def search_channel_posts(intent, limit=None):
                              aliexpress_product_id,
                              shipping_country, offer_type, category,
                              first_level_category_name,
-                               second_level_category_name
+                                second_level_category_name,
+                                product_occurrence_count
                     FROM ranked_posts
                     WHERE product_rank = 1
-                     ORDER BY published_at DESC NULLS LAST,
-                              CASE WHEN published_at IS NULL
-                                   THEN id END DESC,
-                              price ASC NULLS LAST,
-                             id DESC
+                      ORDER BY {order_clause}
                     {limit_clause}
                     """,
                     query_params,
@@ -2167,8 +2169,13 @@ def _price_order_key(post, intent, match_score, position):
     return (missing_price, numeric_price or 0, -match_score, position)
 
 
-def _broad_search_order_key(post, intent, position=0):
-    """Order distinct-product results by price, or by distance to a target."""
+def _broad_search_order_key(
+    post,
+    intent,
+    position=0,
+    occurrence_count=None,
+):
+    """Order broad results by their selected price or frequency intent."""
     numeric_price = _price_as_float(post.get("price"))
     price_mode = str(intent.get("price_mode") or "").casefold()
     target = _price_as_float(intent.get("target_price"))
@@ -2179,14 +2186,48 @@ def _broad_search_order_key(post, intent, position=0):
             if numeric_price is not None
             else 0
         )
-    else:
-        price_rank = numeric_price if numeric_price is not None else 0
+        return (
+            numeric_price is None,
+            price_rank,
+            _post_recency_order_key(post, intent, 1.0, position),
+        )
 
+    if (
+        intent.get("request_type") == "trending"
+        and intent.get("trending_order") == "frequency"
+    ):
+        if occurrence_count is None:
+            occurrence_count = post.get("product_occurrence_count")
+        try:
+            frequency_rank = -int(occurrence_count or 0)
+        except (TypeError, ValueError):
+            frequency_rank = 0
+        return (
+            frequency_rank,
+            _post_recency_order_key(post, intent, 1.0, position),
+        )
+
+    price_rank = numeric_price if numeric_price is not None else 0
     return (
         numeric_price is None,
         price_rank,
         _post_recency_order_key(post, intent, 1.0, position),
     )
+
+
+def _broad_search_sql_order(intent):
+    """Return SQL ordering that matches broad-result ranking before LIMIT."""
+    recency_order = (
+        "published_at DESC NULLS LAST, "
+        "CASE WHEN published_at IS NULL THEN id END DESC, "
+        "price ASC NULLS LAST, id DESC"
+    )
+    if (
+        intent.get("request_type") == "trending"
+        and intent.get("trending_order") == "frequency"
+    ):
+        return f"product_occurrence_count DESC, {recency_order}", []
+    return f"price ASC NULLS LAST, {recency_order}", []
 
 
 def _post_recency_order_key(post, intent=None, match_score=1.0, position=0):
@@ -2893,6 +2934,7 @@ def _rank_filtered_trending_posts(posts, intent, keywords, limit):
             item[1],
             intent,
             item[1].get("id") or 0,
+            occurrence_count=item[0],
         )
     )
     ranked_posts = [post for _occurrences, post in representatives]

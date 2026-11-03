@@ -2867,6 +2867,13 @@ class AiParsingTests(unittest.TestCase):
                     "trending",
                 )
 
+        prominent_result = _local_parse_user_request("أبرز عروض اليوم")
+        self.assertEqual(prominent_result["trending_order"], "frequency")
+        self.assertNotIn(
+            "trending_order",
+            _local_parse_user_request("العروض الرائجة اليوم"),
+        )
+
         price_result = _local_parse_user_request("عروض منتجات اقل من $100")
         self.assertEqual(price_result["request_type"], "trending")
         self.assertEqual(price_result["max_price"], 100.0)
