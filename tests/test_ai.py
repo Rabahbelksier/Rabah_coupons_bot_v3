@@ -110,7 +110,29 @@ class AiParsingTests(unittest.TestCase):
         self.assertIn("title_is_clear", prompt)
         self.assertIn("clean_title", prompt)
         self.assertIn("coupon_line_numbers", prompt)
+        self.assertIn("title_line_numbers", prompt)
+        self.assertIn("price_line_numbers", prompt)
+        self.assertIn("إذا لم توجد تسمية خاصة بالرابط", prompt)
         self.assertIn("currency", prompt)
+
+    @patch("core.ai._call_gemini")
+    def test_normalizes_title_and_price_line_numbers(self, call_gemini):
+        call_gemini.return_value = {
+            "is_offer": True,
+            "title": "Product Model X",
+            "title_line_numbers": [1, "2", 99],
+            "discounted_price": 20,
+            "price_line_numbers": [3, 0],
+            "currency": "$",
+        }
+
+        result = analyze_channel_post(
+            "Product Model X\nDetails\nPrice: 20$\nLink\n"
+            "https://www.aliexpress.com/item/123.html"
+        )
+
+        self.assertEqual(result["title_line_numbers"], [1, 2])
+        self.assertEqual(result["price_line_numbers"], [3])
 
     @patch("core.ai._call_gemini")
     def test_preserves_a_clear_channel_title(self, call_gemini):

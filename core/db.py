@@ -1777,7 +1777,7 @@ def _normalize_result_limit(limit):
 
 
 def search_channel_posts(intent, limit=None):
-    """Search processed posts with recency-first, category-aware ranking."""
+    """Search posts with newest representatives and intent-aware ordering."""
     if not DATABASE_URL:
         return []
 
@@ -1925,10 +1925,9 @@ def search_channel_posts(intent, limit=None):
                 result_limit,
             )
         posts.sort(
-            key=lambda post: _post_recency_order_key(
+            key=lambda post: _broad_search_order_key(
                 post,
                 intent,
-                1.0,
                 post.get("id") or 0,
             )
         )
@@ -2166,6 +2165,28 @@ def _price_order_key(post, intent, match_score, position):
     # Explicit product searches intentionally keep all matching offers in
     # ascending price order as a secondary key when publication times tie.
     return (missing_price, numeric_price or 0, -match_score, position)
+
+
+def _broad_search_order_key(post, intent, position=0):
+    """Order distinct-product results by price, or by distance to a target."""
+    numeric_price = _price_as_float(post.get("price"))
+    price_mode = str(intent.get("price_mode") or "").casefold()
+    target = _price_as_float(intent.get("target_price"))
+
+    if price_mode == "near" and target is not None:
+        price_rank = (
+            abs(numeric_price - target)
+            if numeric_price is not None
+            else 0
+        )
+    else:
+        price_rank = numeric_price if numeric_price is not None else 0
+
+    return (
+        numeric_price is None,
+        price_rank,
+        _post_recency_order_key(post, intent, 1.0, position),
+    )
 
 
 def _post_recency_order_key(post, intent=None, match_score=1.0, position=0):
@@ -2499,10 +2520,9 @@ def _deduplicate_ranked_posts(posts, limit, intent=None):
     representatives = list(unique.values())
     if intent:
         representatives.sort(
-            key=lambda post: _post_recency_order_key(
+            key=lambda post: _broad_search_order_key(
                 post,
                 intent,
-                1.0,
                 post.get("id") or 0,
             )
         )
@@ -2839,7 +2859,7 @@ def _post_match_score(post, intent, keywords):
 
 
 def _rank_filtered_trending_posts(posts, intent, keywords, limit):
-    """Filter grouped trending offers and rank newest source posts first."""
+    """Filter offers, keep newest product representatives, then order them."""
     groups = {}
     for post in posts:
         if _post_match_score(post, intent, keywords) is None:
@@ -2869,17 +2889,13 @@ def _rank_filtered_trending_posts(posts, intent, keywords, limit):
     ]
 
     representatives.sort(
-        key=lambda item: (
-            _post_recency_order_key(
-                item[1],
-                intent,
-                1.0,
-                item[1].get("id") or 0,
-            ),
-            -item[0],
+        key=lambda item: _broad_search_order_key(
+            item[1],
+            intent,
+            item[1].get("id") or 0,
         )
     )
-    ranked_posts = [post for _, post in representatives]
+    ranked_posts = [post for _occurrences, post in representatives]
     return ranked_posts if limit is None else ranked_posts[:limit]
 
 

@@ -329,6 +329,69 @@ class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://t.me/rabahcopons/7366", content)
         self.assertNotIn("s.click.aliexpress.com", content)
 
+    def test_excludes_title_price_shipping_and_coupon_from_link_caption(self):
+        text = (
+            "Xiaomi Redmi Note 14 Pro 12GB 256GB\n"
+            "السعر: 120$\n"
+            "الشحن متوفر إلى فرنسا\n"
+            "كوبون 10$\n"
+            "رابط مباشر:\n"
+            "https://s.click.aliexpress.com/e/_c3tbmYUP\n"
+        )
+        content = _build_channel_content(
+            text,
+            {
+                "title": "Xiaomi Redmi Note 14 Pro 12GB 256GB",
+                "price": 120,
+                "currency": "$",
+                "title_line_numbers": [1],
+                "price_line_numbers": [2],
+                "shipping_line_numbers": [3],
+                "coupon_line_numbers": [4],
+                "shipping_country": "France",
+                "link_sections": [{"line_numbers": [1, 2, 3, 4, 5, 6]}],
+            },
+            ["https://s.click.aliexpress.com/e/_c3tbmYUP"],
+            {
+                "https://s.click.aliexpress.com/e/_c3tbmYUP":
+                    "https://affiliate/product",
+            },
+        )
+
+        self.assertEqual(content.count("Xiaomi Redmi Note 14 Pro 12GB 256GB"), 1)
+        self.assertEqual(content.count("💶 السعر:"), 1)
+        self.assertNotIn("السعر: 120$", content)
+        self.assertEqual(content.count("كوبون 10$"), 1)
+        self.assertIn("رابط مباشر:\nhttps://affiliate/product", content)
+
+    def test_fallback_link_caption_does_not_reuse_product_metadata(self):
+        text = (
+            "منتج ممتاز\n"
+            "السعر 25$\n"
+            "https://s.click.aliexpress.com/e/_c3tbmYUP\n"
+        )
+        content = _build_channel_content(
+            text,
+            {
+                "title": "منتج ممتاز",
+                "price": 25,
+                "currency": "$",
+                "title_line_numbers": [1],
+                "price_line_numbers": [2],
+                "coupon_line_numbers": [],
+                "link_sections": [],
+            },
+            ["https://s.click.aliexpress.com/e/_c3tbmYUP"],
+            {
+                "https://s.click.aliexpress.com/e/_c3tbmYUP":
+                    "https://affiliate/product",
+            },
+        )
+
+        self.assertEqual(content.count("منتج ممتاز"), 1)
+        self.assertEqual(content.count("السعر 25$"), 0)
+        self.assertIn("https://affiliate/product", content)
+
     def test_does_not_add_shipping_lines_without_a_named_country(self):
         text = (
             "منتج ممتاز بسعر 12.50$\n"

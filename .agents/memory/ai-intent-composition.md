@@ -33,8 +33,8 @@ For provider-backed user searches, have the AI produce one canonical Arabic sear
 
 **How to apply:** Keep canonicalization in the existing primary provider call, preserve named products and models, and derive structured fields from the canonical request. Do not add a second provider request or change unrelated search and database behavior.
 
-For all search types, rank by the newest source-post publication time, regardless of price. Keep explicit price bounds and other request filters unchanged. When broad-search deduplication applies, choose the newest eligible post as the representative for each product; use price direction only to break publication-time ties.
+For broad results spanning distinct products, choose the newest eligible post for each product, then rank representatives by ascending price. For a near-price request, rank by absolute distance from the target price, with publication recency as the tie-breaker. Specific-product searches, including repeated offers for one requested product, remain newest-first. Preserve all explicit filters and price bounds.
 
-**Why:** The user explicitly requested newest-first ordering for the previously discussed search types without removing their search filters.
+**Why:** The user requires broad result lists to show the newest offer for each distinct product, ordered from cheapest to most expensive, or closest to the requested price for near-price searches. Requests for one product must continue to show the newest offers first.
 
-**How to apply:** Use the same recency-first ordering for specific-product, category, price-filtered, saved-category, and trending routes. Do not remove product, category, shipping, specification, offer-type, or price-bound filters.
+**How to apply:** Keep representative selection recency-first, independent of final result ordering. Apply price ordering only to deduplicated broad result lists; use absolute target-price distance for near mode and ascending price otherwise. Leave non-deduplicated specific-product ordering and every product, category, shipping, specification, offer-type, and price-bound filter unchanged.

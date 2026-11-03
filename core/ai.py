@@ -2259,6 +2259,8 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
 - title: العنوان الكامل للمنتج كما ورد في المنشور، مع كل التفاصيل مثل
   الموديل، الذاكرة، البطارية، اللون، المقاس والإصدار. لا تختصر العنوان
   ولا تترجم أو تعيد صياغة التفاصيل، أو null.
+- title_line_numbers: أرقام الأسطر التي تحتوي عنوان المنتج الأصلي فقط.
+  لا تعتبر العنوان وصفًا لرابط ولا تدرجه في link_sections.
 - title_is_clear: true إذا كان title عنوانًا مفهومًا ومتناسقًا لمنتج واحد.
   أعد false فقط عندما يكون العنوان خليطًا غير متناسق من كلمات أو عبارات
   تسويقية ولا يشكل عنوان منتج مفهومًا. إذا تعذر التحقق، أعد true.
@@ -2273,9 +2275,10 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
   وكذلك للعروض على أربع قطع أو أكثر.
 - bundle_quantity: عدد القطع المذكور في العرض كرقم صحيح، أو null. هذا الرقم
   لا يجعل العرض باندل وحده.
-- price_line_numbers: أرقام كل الأسطر التي تتحدث عن سعر العرض. في عرض
-  الباندل أدرج أسطر سعر الثلاث قطع وسعر القطعة الواحدة معًا. عند وجود سعرين
-  في عرض باندل، اجعل discounted_price أقل سعر رقمي بينهما.
+- price_line_numbers: أرقام كل الأسطر التي تتحدث عن سعر العرض، سواء كان
+  العرض عاديًا أو باندل. في عرض الباندل أدرج أسطر سعر الثلاث قطع وسعر القطعة
+  الواحدة معًا. عند وجود سعرين في عرض باندل، اجعل discounted_price أقل سعر
+  رقمي بينهما.
 - category: مفتاح الفئة الداخلية الأوضح للمنتج نفسه، وليس اسم تصنيف
   AliExpress الرسمي. أعد phones أو headphones أو tablets أو laptops أو watches
   أو smart_watches أو cameras أو gaming أو home أو accessories أو
@@ -2311,7 +2314,10 @@ _CHANNEL_ANALYSIS_INSTRUCTIONS = """
   تحديد اسم الدولة، واحتفظ بصياغة الاسم الظاهرة في المنشور عند إرجاع
   shipping_country_mentions.
 - link_sections: مجموعات أسطر الروابط. لكل رابط أعد line_numbers تشمل سطر
-  الوصف أو العنوان وكل الأسطر التابعة له وسطر الرابط نفسه.
+  الرابط وأي تسمية خاصة بالرابط فقط مثل "الرابط المباشر". لا تدرج فيها عنوان
+  المنتج أو السعر أو الشحن أو البلد أو الكوبون أو شروطه، حتى لو جاءت هذه
+  الأسطر مباشرة قبل الرابط. إذا لم توجد تسمية خاصة بالرابط، أدرج سطر الرابط
+  وحده.
 - لا تضع أسطر العنوان والسعر في coupon_line_numbers إلا إذا كانت تتحدث
   صراحة عن كوبون أو قسيمة.
 """
@@ -2369,11 +2375,12 @@ def _normalize_channel_analysis(result, text, ai_provider=None):
             len(source_lines),
         ),
     }
-    if (
-        "price_line_numbers" in result
-        or _normalize_offer_type(result.get("offer_type")) == "bundle"
-        or _extract_offer_type_from_text(text) == "bundle"
-    ):
+    if "title_line_numbers" in result:
+        normalized["title_line_numbers"] = _normalize_line_numbers(
+            result.get("title_line_numbers"),
+            len(source_lines),
+        )
+    if "price_line_numbers" in result:
         normalized["price_line_numbers"] = _normalize_line_numbers(
             result.get("price_line_numbers"),
             len(source_lines),
@@ -2738,7 +2745,8 @@ def _channel_analysis_prompt(posts):
 حلل منشورات Telegram التالية. أعد JSON فقط دون أي شرح.
 يجب أن تعيد كائنًا بالشكل التالي:
 {{"posts": [{{"post_id": "المعرّف", "is_offer": true,
-"title": "العنوان الأصلي", "title_is_clear": true, "clean_title": null,
+"title": "العنوان الأصلي", "title_line_numbers": [1],
+"title_is_clear": true, "clean_title": null,
 "discounted_price": 12.5, "offer_type": "normal",
 "bundle_quantity": null, "price_line_numbers": [2],
 "category": "phones", "currency": "$", "coupon_line_numbers": [5, 6],
@@ -2859,8 +2867,9 @@ def analyze_channel_post(text, request_kind="channel"):
 {_CHANNEL_ANALYSIS_INSTRUCTIONS}
 
 النموذج الإجباري:
-{{"is_offer": true, "title": "العنوان الأصلي", "title_is_clear": true,
-"clean_title": null, "discounted_price": 12.5,
+{{"is_offer": true, "title": "العنوان الأصلي", "title_line_numbers": [1],
+"title_is_clear": true, "clean_title": null, "discounted_price": 12.5,
+"price_line_numbers": [2],
 "category": "phones", "currency": "$",
 "coupon_line_numbers": [5, 6], "shipping_line_numbers": [3],
 "shipping_country": "Algeria", "shipping_country_mentions": ["الجزائر"],

@@ -3003,7 +3003,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
-    def test_unlimited_trending_search_returns_all_representatives(
+    def test_unlimited_trending_search_returns_all_representatives_by_price(
         self,
         get_connection,
     ):
@@ -3045,7 +3045,11 @@ class DatabaseSearchTests(unittest.TestCase):
         result = db.search_channel_posts({"request_type": "trending"})
 
         self.assertEqual(len(result), 25)
-        self.assertEqual(result[0]["id"], 1)
+        self.assertEqual(result[0]["id"], 25)
+        self.assertEqual(
+            [post["price"] for post in result],
+            sorted(post["price"] for post in result),
+        )
         query, params = cursor.execute.call_args.args
         self.assertNotIn("LIMIT", query)
         self.assertEqual(params, [])
@@ -3188,7 +3192,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
-    def test_near_price_search_scans_all_offers_but_ranks_newest_first(
+    def test_near_price_search_scans_all_offers_and_ranks_closest_first(
         self,
         get_connection,
     ):
@@ -3260,7 +3264,84 @@ class DatabaseSearchTests(unittest.TestCase):
         query, params = cursor.execute.call_args.args
         self.assertNotIn("LIMIT", query)
         self.assertEqual(params, [])
-        self.assertEqual(result[0]["id"], 1)
+        self.assertEqual(result[0]["id"], 2001)
+
+    @patch.object(db, "_post_match_score", return_value=1.0)
+    def test_broad_results_keep_newest_product_offer_then_sort_by_price(
+        self,
+        _match_score,
+    ):
+        posts = [
+            {
+                "id": 1,
+                "title": "Xiaomi Redmi Note 13 Pro 5G",
+                "aliexpress_product_id": "listing-old",
+                "price": 5,
+                "published_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+            {
+                "id": 2,
+                "title": "Xiaomi Redmi Note 13 Pro 5G",
+                "aliexpress_product_id": "listing-new",
+                "price": 50,
+                "published_at": datetime(2025, 1, 2, tzinfo=timezone.utc),
+            },
+            {
+                "id": 3,
+                "title": "Samsung Galaxy S24 Ultra",
+                "aliexpress_product_id": "samsung",
+                "price": 25,
+                "published_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+        ]
+
+        result = db._rank_filtered_trending_posts(
+            posts,
+            {"request_type": "trending", "category": "phones"},
+            [],
+            None,
+        )
+
+        self.assertEqual([post["id"] for post in result], [3, 2])
+
+    @patch.object(db, "_post_match_score", return_value=1.0)
+    def test_near_price_broad_results_sort_by_distance_then_recency(
+        self,
+        _match_score,
+    ):
+        posts = [
+            {
+                "id": 1,
+                "title": "Product A",
+                "price": 120,
+                "published_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+            {
+                "id": 2,
+                "title": "Product B",
+                "price": 80,
+                "published_at": datetime(2025, 1, 2, tzinfo=timezone.utc),
+            },
+            {
+                "id": 3,
+                "title": "Product C",
+                "price": 105,
+                "published_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            },
+        ]
+
+        result = db._rank_filtered_trending_posts(
+            posts,
+            {
+                "request_type": "trending",
+                "price_mode": "near",
+                "target_price": 100,
+            },
+            [],
+            None,
+        )
+
+        self.assertEqual([post["id"] for post in result], [3, 2, 1])
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
@@ -3345,7 +3426,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
     @patch.object(db, "DATABASE_URL", "postgres://test")
     @patch.object(db, "get_db_connection")
-    def test_price_range_returns_newest_offer_inside_the_range(
+    def test_price_range_keeps_newest_offer_per_product_and_sorts_by_price(
         self,
         get_connection,
     ):
@@ -3397,7 +3478,7 @@ class DatabaseSearchTests(unittest.TestCase):
             limit=10,
         )
 
-        self.assertEqual([post["id"] for post in result], [1, 2])
+        self.assertEqual([post["id"] for post in result], [2, 1])
 
     def test_category_search_requires_all_explicit_phone_specs(self):
         from core.db import _post_match_score

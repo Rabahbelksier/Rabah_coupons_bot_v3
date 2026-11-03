@@ -245,9 +245,15 @@ def _lines_for_numbers(source_lines, line_numbers):
     ]
 
 
-def _fallback_link_sections(source_lines, urls):
+def _fallback_link_sections(
+    source_lines,
+    urls,
+    excluded_line_numbers=(),
+    title=None,
+):
     sections = []
     used_lines = set()
+    excluded_line_numbers = set(excluded_line_numbers)
     for url in urls:
         url_line_index = next(
             (
@@ -267,6 +273,11 @@ def _fallback_link_sections(source_lines, urls):
             and source_lines[description_index].strip()
             and not extract_aliexpress_urls(source_lines[description_index])
             and description_index not in used_lines
+            and description_index + 1 not in excluded_line_numbers
+            and not _is_link_metadata_line(
+                source_lines[description_index],
+                title,
+            )
         ):
             line_indexes.insert(0, description_index)
         used_lines.update(line_indexes)
@@ -274,14 +285,84 @@ def _fallback_link_sections(source_lines, urls):
     return sections
 
 
+def _excluded_link_line_numbers(analysis):
+    excluded = set()
+    for field in (
+        "title_line_numbers",
+        "price_line_numbers",
+        "shipping_line_numbers",
+        "coupon_line_numbers",
+    ):
+        excluded.update(analysis.get(field, []))
+    return excluded
+
+
+def _is_link_metadata_line(line, title):
+    normalized_line = " ".join(
+        re.sub(r"[^\w\u0600-\u06ff]+", " ", str(line or "").casefold()).split()
+    )
+    normalized_title = " ".join(
+        re.sub(r"[^\w\u0600-\u06ff]+", " ", str(title or "").casefold()).split()
+    )
+    line_tokens = normalized_line.split()
+    if (
+        normalized_title
+        and (
+            normalized_title in normalized_line
+            or (
+                len(line_tokens) > 1
+                and normalized_line in normalized_title
+            )
+        )
+    ):
+        return True
+    if re.search(
+        r"(?:كوبون|قسيمة|coupon|promo(?:tion)?\s*code|code\s*promo|"
+        r"bon\s+de\s+r[eé]duction)",
+        line or "",
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"(?:الشحن|شحن|التوصيل|توصيل|shipping|delivery|livraison|"
+        r"exp[eé]dition|envoi|env[ií]o)",
+        line or "",
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return bool(
+        re.search(
+            r"(?:السعر|سعر|الثمن|price|prix|tarif|cost|"
+            r"\d[\d.,]*\s?(?:\$|€|£|دج|USD|EUR)|"
+            r"(?:\$|€|£)\s?\d)",
+            line or "",
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _build_link_sections(text, analysis, urls):
     source_lines = (text or "").splitlines()
     sections = []
     included_urls = set()
+    excluded_lines = _excluded_link_line_numbers(analysis)
+
+    def filtered_lines(line_numbers):
+        lines = []
+        for line_number in line_numbers:
+            if not 1 <= line_number <= len(source_lines):
+                continue
+            if line_number in excluded_lines:
+                continue
+            line = source_lines[line_number - 1]
+            if _is_link_metadata_line(line, analysis.get("title")):
+                continue
+            lines.append(line)
+        return lines
 
     for section in analysis.get("link_sections", []):
         line_numbers = section.get("line_numbers", [])
-        lines = _lines_for_numbers(source_lines, line_numbers)
+        lines = filtered_lines(line_numbers)
         section_urls = extract_aliexpress_urls("\n".join(lines))
         if not section_urls:
             continue
@@ -290,11 +371,21 @@ def _build_link_sections(text, analysis, urls):
 
     missing_urls = [url for url in urls if url not in included_urls]
     if missing_urls:
-        fallback_sections = _fallback_link_sections(source_lines, missing_urls)
+        fallback_sections = _fallback_link_sections(
+            source_lines,
+            missing_urls,
+            excluded_lines,
+            analysis.get("title"),
+        )
         sections.extend(fallback_sections)
 
     if not sections:
-        return _fallback_link_sections(source_lines, urls)
+        return _fallback_link_sections(
+            source_lines,
+            urls,
+            excluded_lines,
+            analysis.get("title"),
+        )
     return sections
 
 
