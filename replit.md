@@ -16,6 +16,7 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 │   ├── scraper.py             # Scraping fallback (BeautifulSoup + regex)
 │   ├── cache.py               # TTLCache instances and locks
 │   ├── coupons.py             # Shared coupon query and value/code grouping
+│   ├── product_prices.py      # Shared batch lookup for current AliExpress USD prices
 │   └── db.py                  # PostgreSQL: init_db, users, and admin cart mutations
 │
 ├── handlers/
@@ -27,7 +28,8 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 │
 ├── services/
 │   ├── worker.py              # process_link_for_user: full pipeline for one URL
-│   └── queue_manager.py       # Per-user asyncio queues, enqueue_url, worker loop
+│   ├── queue_manager.py       # Per-user asyncio queues, enqueue_url, worker loop
+│   └── cart_price_updater.py  # Startup and five-hour refresh of Smart Cart prices
 │
 └── utils/
     ├── http.py                # Shared requests.Session with connection pooling
@@ -37,6 +39,8 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 
 ## Smart Cart AI
 - The existing offer flow remains unchanged; its result now includes a separate Smart Cart AI button.
+- Current product prices are refreshed at bot startup and every five hours. All resolvable cart product IDs are sent in one AliExpress API request using USD and Algeria settings; failed lookups keep the saved price unchanged.
+- Rows whose current price could not be retrieved are marked with two leading zeroes in the ID shown in the admin cart. The underlying primary key remains unchanged.
 - Smart Cart uses the `coupon_codes` rows where `country = 'dz'` and thresholds exceed the main product price.
 - It guides the user through seller discount, automatic discount, and shipping inputs, then generates every qualifying combination from `cart` in a worker thread.
 - Each combination uses `pricecart` for coupon eligibility, must total from the coupon threshold through threshold + $15, and cannot contain two products with the same `stor`.
@@ -48,6 +52,7 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 ## Admin Cart Management
 - `/admin` without the access code replies with the existing admin contact message.
 - `/admin <access code>` enables a per-user admin session and sends one message per `cart` row.
+- Each cart row is shown in its own message with its own edit button; add and return actions remain available on the last row.
 - Each row is displayed as `id | link | pricecart | pricefinalcart | stor | ship`; the `link` label is a clickable blue link and the stored URL is shown below it.
 - The `تعديل` button requests a complete row, while `إضافة` inserts a complete new row. Both operations refresh the displayed cart after a successful database commit.
 - `خروج` clears the admin session so subsequent text follows the normal product-link flow.

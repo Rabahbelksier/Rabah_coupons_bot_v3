@@ -7,7 +7,7 @@ from core.db import (
     apply_cart_price_refresh_results,
     get_cart_price_refresh_rows,
 )
-from core.smart_cart import fetch_current_prices
+from core.product_prices import fetch_current_prices
 from utils.parser import extract_product_id
 
 logger = logging.getLogger(__name__)
