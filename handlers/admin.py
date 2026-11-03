@@ -72,6 +72,13 @@ ADMIN_ROW_TEMPLATE = "id | link | pricecart | pricefinalcart | stor | ship"
 TELEGRAM_MESSAGE_LIMIT = 4096
 
 
+def admin_cart_back_button():
+    return InlineKeyboardButton(
+        "العودة إلى أداة السلة الذكية",
+        callback_data="admin_smart",
+    )
+
+
 def _split_text(text, limit=TELEGRAM_MESSAGE_LIMIT):
     """Split text into Telegram-safe chunks without cutting a line when possible."""
     text = str(text or "")
@@ -168,14 +175,13 @@ def admin_actions_keyboard(row_ids=(), *, include_navigation=True):
     if include_navigation:
         rows.extend([
             [InlineKeyboardButton("إضافة", callback_data="admin_add")],
-            [InlineKeyboardButton("العودة إلى القائمة", callback_data="admin_menu")],
+            [admin_cart_back_button()],
         ])
     return InlineKeyboardMarkup(rows)
 
 
 def admin_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("المنتجات الإضافية", callback_data="admin_cart")],
         [InlineKeyboardButton("الأدوات", callback_data="admin_tools")],
         [InlineKeyboardButton("المستخدمين", callback_data="admin_users")],
         [InlineKeyboardButton("تقارير الأخطاء", callback_data="admin_logs")],
@@ -186,8 +192,6 @@ def admin_menu_keyboard():
 def admin_tools_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("أداة الذكاء الاصطناعي", callback_data="admin_ai")],
-        [InlineKeyboardButton("AI Service", callback_data="admin_service")],
-        [InlineKeyboardButton("تراكم منشورات Telegram", callback_data="admin_queue")],
         [InlineKeyboardButton("أداة السلة الذكية", callback_data="admin_smart")],
         [InlineKeyboardButton("النشر في القناة", callback_data="admin_publish")],
         [InlineKeyboardButton("العودة للقائمة", callback_data="admin_menu")],
@@ -209,9 +213,12 @@ def admin_back_keyboard():
     ]])
 
 
-def admin_tools_back_keyboard():
+def admin_ai_back_keyboard():
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("العودة إلى قائمة الأدوات", callback_data="admin_tools")
+        InlineKeyboardButton(
+            "العودة إلى أدوات الذكاء الاصطناعي",
+            callback_data="admin_ai",
+        )
     ]])
 
 
@@ -310,8 +317,8 @@ def ai_service_keyboard(providers):
     ])
     rows.append([
         InlineKeyboardButton(
-            "العودة إلى قائمة الأدوات",
-            callback_data="admin_tools",
+            "العودة إلى أدوات الذكاء الاصطناعي",
+            callback_data="admin_ai",
         )
     ])
     return InlineKeyboardMarkup(rows)
@@ -324,8 +331,8 @@ def ai_service_details_keyboard():
             callback_data="admin_service",
         )],
         [InlineKeyboardButton(
-            "العودة إلى قائمة الأدوات",
-            callback_data="admin_tools",
+            "العودة إلى أدوات الذكاء الاصطناعي",
+            callback_data="admin_ai",
         )],
     ])
 
@@ -409,6 +416,39 @@ def feature_toggle_keyboard(feature_key, enabled):
     rows = [
         [InlineKeyboardButton(label, callback_data=f"admin_{callback_prefix}_{action}")],
     ]
+    if feature_key == "ai_search":
+        rows.extend([
+            [InlineKeyboardButton("AI Service", callback_data="admin_service")],
+            [
+                InlineKeyboardButton(
+                    "تراكم منشورات Telegram",
+                    callback_data="admin_queue",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "العودة إلى قائمة الأدوات",
+                    callback_data="admin_tools",
+                ),
+            ],
+        ])
+        return InlineKeyboardMarkup(rows)
+    if feature_key == "smart_cart":
+        rows.extend([
+            [
+                InlineKeyboardButton(
+                    "المنتجات الإضافية",
+                    callback_data="admin_cart",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "العودة إلى قائمة الأدوات",
+                    callback_data="admin_tools",
+                ),
+            ],
+        ])
+        return InlineKeyboardMarkup(rows)
     if feature_key == "auto_publish":
         rows.append([
             InlineKeyboardButton(
@@ -745,7 +785,7 @@ async def send_channel_queue_status(message, *, edit=False):
     await _render_admin_message(
         message,
         _format_channel_queue_status(status),
-        reply_markup=admin_tools_back_keyboard(),
+        reply_markup=admin_ai_back_keyboard(),
         edit=edit,
     )
 
@@ -1146,7 +1186,7 @@ async def _send_admin_input_prompt(message, action, *, edit=False):
         f"أرسل سطر {operation} كاملا بهذا القالب:\n"
         f"{ADMIN_ROW_TEMPLATE}\n"
         ,
-        reply_markup=admin_back_keyboard(),
+        reply_markup=InlineKeyboardMarkup([[admin_cart_back_button()]]),
         edit=edit,
     )
 

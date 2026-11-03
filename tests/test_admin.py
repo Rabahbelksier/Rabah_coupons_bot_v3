@@ -30,7 +30,7 @@ from handlers.admin import (
     admin_cleanup_confirmation_keyboard,
     admin_command,
     admin_menu_keyboard,
-    admin_tools_back_keyboard,
+    admin_ai_back_keyboard,
     admin_tools_keyboard,
     admin_users_keyboard,
     ai_service_keyboard,
@@ -367,17 +367,19 @@ class AdminCartTests(unittest.TestCase):
     def test_admin_menu_has_current_and_activity_actions_including_exit(self):
         keyboard = admin_menu_keyboard()
 
-        labels = [button.text for row in keyboard.inline_keyboard for button in row]
-        self.assertIn("المنتجات الإضافية", labels)
-        self.assertIn("الأدوات", labels)
-        self.assertIn("المستخدمين", labels)
-        self.assertNotIn("أداة الذكاء الاصطناعي", labels)
-        self.assertNotIn("AI Service", labels)
-        self.assertNotIn("أداة السلة الذكية", labels)
-        self.assertNotIn("نشاط المستخدمين", labels)
-        self.assertNotIn("إشعار المستخدمين", labels)
-        self.assertIn("تقارير الأخطاء", labels)
-        self.assertEqual(labels[-1], "خروج")
+        self.assertEqual(
+            [
+                (button.text, button.callback_data)
+                for row in keyboard.inline_keyboard
+                for button in row
+            ],
+            [
+                ("الأدوات", "admin_tools"),
+                ("المستخدمين", "admin_users"),
+                ("تقارير الأخطاء", "admin_logs"),
+                ("خروج", "admin_exit"),
+            ],
+        )
 
     def test_admin_grouped_submenus_keep_existing_actions(self):
         tools = admin_tools_keyboard()
@@ -391,8 +393,6 @@ class AdminCartTests(unittest.TestCase):
             ],
             [
                 ("أداة الذكاء الاصطناعي", "admin_ai"),
-                ("AI Service", "admin_service"),
-                ("تراكم منشورات Telegram", "admin_queue"),
                 ("أداة السلة الذكية", "admin_smart"),
                 ("النشر في القناة", "admin_publish"),
                 ("العودة للقائمة", "admin_menu"),
@@ -412,21 +412,36 @@ class AdminCartTests(unittest.TestCase):
             ],
         )
 
-    def test_tool_keyboards_return_to_tools_menu(self):
+    def test_tool_submenus_expose_expected_actions_and_return_paths(self):
         with self.subTest(keyboard="ai"):
             keyboard = feature_toggle_keyboard("ai_search", True)
             self.assertEqual(
-                (keyboard.inline_keyboard[-1][0].text,
-                 keyboard.inline_keyboard[-1][0].callback_data),
-                ("العودة إلى قائمة الأدوات", "admin_tools"),
+                [
+                    (button.text, button.callback_data)
+                    for row in keyboard.inline_keyboard
+                    for button in row
+                ],
+                [
+                    ("تعطيل", "admin_ai_disable"),
+                    ("AI Service", "admin_service"),
+                    ("تراكم منشورات Telegram", "admin_queue"),
+                    ("العودة إلى قائمة الأدوات", "admin_tools"),
+                ],
             )
 
         with self.subTest(keyboard="smart"):
             keyboard = feature_toggle_keyboard("smart_cart", False)
             self.assertEqual(
-                (keyboard.inline_keyboard[-1][0].text,
-                 keyboard.inline_keyboard[-1][0].callback_data),
-                ("العودة إلى قائمة الأدوات", "admin_tools"),
+                [
+                    (button.text, button.callback_data)
+                    for row in keyboard.inline_keyboard
+                    for button in row
+                ],
+                [
+                    ("تفعيل", "admin_smart_enable"),
+                    ("المنتجات الإضافية", "admin_cart"),
+                    ("العودة إلى قائمة الأدوات", "admin_tools"),
+                ],
             )
 
         with self.subTest(keyboard="service"):
@@ -436,7 +451,7 @@ class AdminCartTests(unittest.TestCase):
             self.assertEqual(
                 (keyboard.inline_keyboard[-1][0].text,
                  keyboard.inline_keyboard[-1][0].callback_data),
-                ("العودة إلى قائمة الأدوات", "admin_tools"),
+                ("العودة إلى أدوات الذكاء الاصطناعي", "admin_ai"),
             )
 
         with self.subTest(keyboard="service_details"):
@@ -444,15 +459,15 @@ class AdminCartTests(unittest.TestCase):
             self.assertEqual(
                 (keyboard.inline_keyboard[-1][0].text,
                  keyboard.inline_keyboard[-1][0].callback_data),
-                ("العودة إلى قائمة الأدوات", "admin_tools"),
+                ("العودة إلى أدوات الذكاء الاصطناعي", "admin_ai"),
             )
 
         with self.subTest(keyboard="queue"):
-            keyboard = admin_tools_back_keyboard()
+            keyboard = admin_ai_back_keyboard()
             self.assertEqual(
                 (keyboard.inline_keyboard[-1][0].text,
                  keyboard.inline_keyboard[-1][0].callback_data),
-                ("العودة إلى قائمة الأدوات", "admin_tools"),
+                ("العودة إلى أدوات الذكاء الاصطناعي", "admin_ai"),
             )
 
     def test_publish_methods_offer_manual_and_automatic_paths(self):
@@ -1138,7 +1153,7 @@ class AdminCartTests(unittest.TestCase):
                 call.kwargs["reply_markup"].inline_keyboard[-1][0].callback_data
                 for call in tool_messages
             ],
-            ["admin_tools"] * 4,
+            ["admin_tools", "admin_ai", "admin_ai", "admin_tools"],
         )
 
     @patch("handlers.admin.get_ai_service_status")
@@ -1762,16 +1777,16 @@ class AdminCartTests(unittest.TestCase):
         )
         self.assertNotIn("admin_state", context.user_data)
 
-    def test_cart_actions_return_to_admin_menu_instead_of_exiting(self):
+    def test_cart_actions_return_to_smart_cart_menu(self):
         keyboard = admin_actions_keyboard()
 
         self.assertEqual(
             keyboard.inline_keyboard[-1][0].text,
-            "العودة إلى القائمة",
+            "العودة إلى أداة السلة الذكية",
         )
         self.assertEqual(
             keyboard.inline_keyboard[-1][0].callback_data,
-            "admin_menu",
+            "admin_smart",
         )
 
     def test_parses_the_admin_cart_template(self):
@@ -1875,7 +1890,7 @@ class AdminCartTests(unittest.TestCase):
             second_keyboard.inline_keyboard[0][0].callback_data,
             "admin_edit_2",
         )
-        self.assertEqual(second_keyboard.inline_keyboard[-1][0].callback_data, "admin_menu")
+        self.assertEqual(second_keyboard.inline_keyboard[-1][0].callback_data, "admin_smart")
 
     def test_rejects_a_row_with_the_wrong_number_of_columns(self):
         with self.assertRaises(ValueError):
