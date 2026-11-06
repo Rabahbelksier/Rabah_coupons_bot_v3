@@ -7,4 +7,4 @@ The Telegram application must be initialized and started before the web server b
 
 **Why:** Deferring initialization until the first webhook makes the first user wait for Telegram setup and potentially slow secondary services after every deployment.
 
-**How to apply:** Keep the readiness guard as a fallback, but invoke it during process startup. Do not add database maintenance, channel synchronization, or optional network setup to the synchronous first-update path.
+**How to apply:** Keep the readiness guard as a fallback, but invoke it during process startup. Do not add database maintenance, channel synchronization, or optional network setup to the synchronous first-update path. For `/start`, begin sending the user reply before awaiting the Meta CAPI outbox so Meta latency cannot delay the bot response. Configure the Telegram HTTP connection pool and timeouts for the app's concurrent request load.

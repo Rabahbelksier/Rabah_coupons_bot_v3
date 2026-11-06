@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -81,6 +82,48 @@ class HelpAndStartTests(unittest.IsolatedAsyncioTestCase):
             pending,
         )
         reply_text.assert_awaited_once()
+
+    async def test_start_replies_before_meta_delivery_finishes(self):
+        order = []
+        release_meta_delivery = asyncio.Event()
+
+        async def reply_text(*_args, **_kwargs):
+            order.append("reply")
+            release_meta_delivery.set()
+
+        async def delayed_meta_delivery(*_args, **_kwargs):
+            order.append("meta-started")
+            await release_meta_delivery.wait()
+            order.append("meta-finished")
+
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(
+                id=654,
+                first_name="Test",
+                last_name="User",
+            ),
+            message=SimpleNamespace(reply_text=reply_text),
+        )
+        context = SimpleNamespace(user_data={}, args=["campaign-1"])
+
+        with (
+            patch("handlers.start.META_ATTRIBUTION_ID", "campaign-1"),
+            patch(
+                "handlers.start.save_user",
+                return_value=[{
+                    "id": 10,
+                    "chat_id": 654,
+                    "attribution_id": "campaign-1",
+                }],
+            ),
+            patch(
+                "handlers.start.asyncio.to_thread",
+                side_effect=delayed_meta_delivery,
+            ),
+        ):
+            await start(update, context)
+
+        self.assertLess(order.index("reply"), order.index("meta-finished"))
 
     async def test_start_does_not_pass_multiword_payload_as_attribution(self):
         reply_text = AsyncMock()

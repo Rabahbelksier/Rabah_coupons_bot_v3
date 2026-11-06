@@ -13,6 +13,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from config import (
     CHANNEL_MONITOR_ENABLED,
@@ -85,6 +86,15 @@ def _build_telegram_app(is_recovery=False):
     application = (
         Application.builder()
         .token(TOKEN)
+        .request(
+            HTTPXRequest(
+                connection_pool_size=32,
+                connect_timeout=10,
+                read_timeout=15,
+                write_timeout=15,
+                pool_timeout=10,
+            )
+        )
         .updater(None)
         .concurrent_updates(16)
         .build()

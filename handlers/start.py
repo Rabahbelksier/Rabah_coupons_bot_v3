@@ -45,12 +45,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         attribution_id=attribution_id,
         expected_attribution_id=META_ATTRIBUTION_ID,
     )
+    event_delivery = None
     if pending_events:
-        await asyncio.to_thread(send_pending_telegram_start_events, pending_events)
-    await update.message.reply_text(
-        START_TEXT,
-        reply_markup=start_keyboard(),
-    )
+        event_delivery = asyncio.create_task(
+            asyncio.to_thread(
+                send_pending_telegram_start_events,
+                pending_events,
+            )
+        )
+
+    try:
+        await update.message.reply_text(
+            START_TEXT,
+            reply_markup=start_keyboard(),
+        )
+    finally:
+        if event_delivery:
+            await event_delivery
 
 
 async def start_ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
