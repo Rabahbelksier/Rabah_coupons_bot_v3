@@ -113,6 +113,14 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - `/start` saves a matching campaign value in `user_bot.meta_source_id`. A new
   Meta event is queued only when that value changes; repeat starts with the same
   value do not create duplicate events.
+- `/bot` reads valid `_fbp` and `_fbc` browser cookies and sends them to a
+  same-origin endpoint. When either exists, the server stores them briefly under
+  a random Telegram start token; cookie values are never placed in the Telegram
+  URL. `/start` consumes that token only for the currently configured campaign.
+- Forward these advertising identifiers only where the site's privacy notice
+  and user-consent requirements allow it.
+- The click-token records expire after 24 hours. Browser IDs are attached to the
+  queued CAPI event and cleared from the outbox after successful delivery.
 - Pending `TelegramBotStart` events are sent to the same Pixel through Meta's
   Conversions API. Failed sends remain queued and can be retried on a later
   matching `/start`.
@@ -120,6 +128,8 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 ## Database Schema
 - **user_bot** table: first_name (TEXT), last_name (TEXT), chat_id (BIGINT PRIMARY KEY), meta_source_id (TEXT)
 - **meta_event_outbox** table: durable retry records for Meta subscription events
+- **meta_click_attributions** table: short-lived server-side mapping between an
+  opaque Telegram start token, campaign code, and available browser IDs
 
 ## Deployment Files
 - `requirements.txt`: Python dependencies

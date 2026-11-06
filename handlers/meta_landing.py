@@ -1,12 +1,36 @@
-from flask import Blueprint, Response
+import re
+from urllib.parse import urlsplit
+
+from flask import Blueprint, Response, jsonify, request
 
 from config import META_ATTRIBUTION_ID, META_PIXEL_ID
+from core.db import create_meta_click_attribution
 
 meta_landing = Blueprint("meta_landing", __name__)
 TELEGRAM_BOT_USERNAME = "rabahcoupons1bot"
 _TELEGRAM_START_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 )
+_META_COOKIE_PATTERN = re.compile(r"^fb\.\d+\.\d+\.[A-Za-z0-9._-]+$")
+
+
+def _meta_cookie_value(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if len(value) > 255 or not _META_COOKIE_PATTERN.fullmatch(value):
+        return None
+    return value
+
+
+def _same_origin_request():
+    origin = request.headers.get("Origin", "")
+    parsed_origin = urlsplit(origin)
+    return (
+        parsed_origin.scheme in {"http", "https"}
+        and bool(parsed_origin.netloc)
+        and parsed_origin.netloc.lower() == request.host.lower()
+    )
 
 
 @meta_landing.get("/bot")
@@ -23,10 +47,8 @@ def bot_redirect():
             mimetype="text/plain",
         )
 
-    telegram_url = (
-        f"https://t.me/{TELEGRAM_BOT_USERNAME}"
-        f"?start={META_ATTRIBUTION_ID}"
-    )
+    telegram_start_url = f"https://t.me/{TELEGRAM_BOT_USERNAME}?start="
+    telegram_url = f"{telegram_start_url}{META_ATTRIBUTION_ID}"
     page = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -36,9 +58,6 @@ def bot_redirect():
 </head>
 <body>
 <script>
-window.setTimeout(function () {{
-  window.location.replace({telegram_url!r});
-}}, 800);
 !function(f,b,e,v,n,t,s)
 {{if(f.fbq)return;n=f.fbq=function(){{n.callMethod?
 n.callMethod.apply(n,arguments):n.queue.push(arguments)}};
@@ -49,6 +68,65 @@ s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}}
 fbq('init', '{META_PIXEL_ID}');
 fbq('track', 'PageView');
 fbq('trackCustom', 'TelegramClick');
+(function() {{
+  const fallbackUrl = {telegram_url!r};
+  const telegramStartUrl = {telegram_start_url!r};
+  let redirectUrl = fallbackUrl;
+
+  function readMetaCookie(name) {{
+    const prefix = name + '=';
+    const entry = document.cookie.split(';').map(function(value) {{
+      return value.trim();
+    }}).find(function(value) {{
+      return value.indexOf(prefix) === 0;
+    }});
+    return entry ? entry.slice(prefix.length) : '';
+  }}
+
+  function waitForMetaCookies() {{
+    return new Promise(function(resolve) {{
+      const deadline = Date.now() + 450;
+      function poll() {{
+        const values = {{
+          fbp: readMetaCookie('_fbp'),
+          fbc: readMetaCookie('_fbc')
+        }};
+        if (values.fbp || values.fbc || Date.now() >= deadline) {{
+          resolve(values);
+        }} else {{
+          window.setTimeout(poll, 50);
+        }}
+      }}
+      poll();
+    }});
+  }}
+
+  waitForMetaCookies()
+    .then(function(values) {{
+      return fetch('/bot/attribution', {{
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(values)
+      }});
+    }})
+    .then(function(response) {{
+      if (!response.ok) throw new Error('Attribution request failed');
+      return response.json();
+    }})
+    .then(function(result) {{
+      const payload = result && result.start_payload;
+      if (typeof payload === 'string'
+          && /^[A-Za-z0-9_-]{{1,64}}$/.test(payload)) {{
+        redirectUrl = telegramStartUrl + encodeURIComponent(payload);
+      }}
+    }})
+    .catch(function() {{}});
+
+  window.setTimeout(function() {{
+    window.location.replace(redirectUrl);
+  }}, 800);
+}})();
 </script>
 </body>
 </html>"""
@@ -61,3 +139,38 @@ fbq('trackCustom', 'TelegramClick');
             "X-Robots-Tag": "noindex, nofollow",
         },
     )
+
+
+@meta_landing.post("/bot/attribution")
+def create_bot_attribution():
+    if (
+        not META_PIXEL_ID.isdigit()
+        or not META_ATTRIBUTION_ID
+        or len(META_ATTRIBUTION_ID) > 64
+        or any(char not in _TELEGRAM_START_CHARS for char in META_ATTRIBUTION_ID)
+    ):
+        return Response(
+            "Meta Pixel and a valid Telegram attribution ID must be configured.",
+            status=503,
+            mimetype="text/plain",
+        )
+    if not _same_origin_request():
+        return jsonify({"error": "Invalid origin"}), 403
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON"}), 400
+
+    fbp = _meta_cookie_value(payload.get("fbp"))
+    fbc = _meta_cookie_value(payload.get("fbc"))
+    start_payload = create_meta_click_attribution(
+        META_ATTRIBUTION_ID,
+        fbp=fbp,
+        fbc=fbc,
+    )
+
+    response = jsonify({
+        "start_payload": start_payload or META_ATTRIBUTION_ID,
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return response

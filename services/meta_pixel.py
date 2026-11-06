@@ -22,6 +22,14 @@ def _send_telegram_start_event(event):
     external_id = hashlib.sha256(
         str(event["chat_id"]).strip().lower().encode("utf-8")
     ).hexdigest()
+    user_data = {
+        "external_id": [external_id],
+    }
+    if event.get("fbp"):
+        user_data["fbp"] = event["fbp"]
+    if event.get("fbc"):
+        user_data["fbc"] = event["fbc"]
+
     payload = {
         "data": [
             {
@@ -29,9 +37,7 @@ def _send_telegram_start_event(event):
                 "event_time": int(time.time()),
                 "event_id": f"telegram-start-{event['id']}",
                 "action_source": "chat",
-                "user_data": {
-                    "external_id": [external_id],
-                },
+                "user_data": user_data,
                 "custom_data": {
                     "attribution_id": event["attribution_id"],
                 },

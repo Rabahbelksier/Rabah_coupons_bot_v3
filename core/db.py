@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+import secrets
 import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -197,6 +198,8 @@ def init_db():
                 id BIGSERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL,
                 attribution_id TEXT NOT NULL,
+                fbp TEXT,
+                fbc TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 sent_at TIMESTAMPTZ,
                 claimed_at TIMESTAMPTZ,
@@ -207,6 +210,29 @@ def init_db():
         cur.execute("""
             ALTER TABLE IF EXISTS meta_event_outbox
             ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
+        """)
+        for column_name in ("fbp", "fbc"):
+            cur.execute(
+                "ALTER TABLE IF EXISTS meta_event_outbox "
+                f"ADD COLUMN IF NOT EXISTS {column_name} TEXT"
+            )
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS meta_click_attributions (
+                token_hash TEXT PRIMARY KEY,
+                campaign_id TEXT NOT NULL,
+                fbp TEXT,
+                fbc TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMPTZ NOT NULL
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS meta_click_attributions_expiry_idx
+            ON meta_click_attributions (expires_at)
+        """)
+        cur.execute("""
+            DELETE FROM meta_click_attributions
+            WHERE expires_at <= CURRENT_TIMESTAMP
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS meta_event_outbox_pending_idx
@@ -3119,6 +3145,28 @@ def save_user(
         conn = get_db_connection()
         pending_events = []
         with conn.cursor() as cur:
+            click_fbp = None
+            click_fbc = None
+            if (
+                attribution_id
+                and expected_attribution_id
+                and attribution_id != expected_attribution_id
+                and attribution_id.startswith("m_")
+            ):
+                token_hash = hashlib.sha256(
+                    attribution_id.encode("utf-8")
+                ).hexdigest()
+                cur.execute("""
+                    DELETE FROM meta_click_attributions
+                    WHERE token_hash = %s
+                      AND campaign_id = %s
+                      AND expires_at > CURRENT_TIMESTAMP
+                    RETURNING campaign_id, fbp, fbc
+                """, (token_hash, expected_attribution_id))
+                click_attribution = cur.fetchone()
+                if click_attribution:
+                    attribution_id, click_fbp, click_fbc = click_attribution
+
             is_attributed = (
                 bool(attribution_id)
                 and bool(expected_attribution_id)
@@ -3147,10 +3195,15 @@ def save_user(
                 if changed_user:
                     cur.execute("""
                         INSERT INTO meta_event_outbox (
-                            chat_id, attribution_id
+                            chat_id, attribution_id, fbp, fbc
                         )
-                        VALUES (%s, %s)
-                    """, (chat_id, attribution_id))
+                        VALUES (%s, %s, %s, %s)
+                    """, (
+                        chat_id,
+                        attribution_id,
+                        click_fbp,
+                        click_fbc,
+                    ))
 
                 cur.execute("""
                     WITH candidates AS (
@@ -3172,16 +3225,25 @@ def save_user(
                     FROM candidates
                     WHERE queued.id = candidates.id
                     RETURNING queued.id, queued.chat_id,
-                              queued.attribution_id
+                              queued.attribution_id, queued.fbp, queued.fbc
                 """, (chat_id,))
-                pending_events = [
-                    {
+                for (
+                    event_id,
+                    event_chat_id,
+                    source_id,
+                    event_fbp,
+                    event_fbc,
+                ) in cur.fetchall():
+                    event = {
                         "id": event_id,
                         "chat_id": event_chat_id,
                         "attribution_id": source_id,
                     }
-                    for event_id, event_chat_id, source_id in cur.fetchall()
-                ]
+                    if event_fbp:
+                        event["fbp"] = event_fbp
+                    if event_fbc:
+                        event["fbc"] = event_fbc
+                    pending_events.append(event)
             else:
                 cur.execute("""
                     INSERT INTO user_bot (
@@ -3204,6 +3266,45 @@ def save_user(
             conn.close()
 
 
+def create_meta_click_attribution(campaign_id, fbp=None, fbc=None):
+    if not DATABASE_URL or not campaign_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                DELETE FROM meta_click_attributions
+                WHERE expires_at <= CURRENT_TIMESTAMP
+            """)
+            if not (fbp or fbc):
+                conn.commit()
+                return None
+
+            token = f"m_{secrets.token_urlsafe(18)}"
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            cursor.execute("""
+                INSERT INTO meta_click_attributions (
+                    token_hash, campaign_id, fbp, fbc, expires_at
+                )
+                VALUES (
+                    %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP + INTERVAL '24 hours'
+                )
+            """, (token_hash, campaign_id, fbp, fbc))
+        conn.commit()
+        return token
+    except Exception:
+        if conn:
+            conn.rollback()
+        logger.exception("Could not save Meta click attribution")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+
 def mark_meta_event_sent(event_id):
     if not DATABASE_URL:
         return
@@ -3216,6 +3317,8 @@ def mark_meta_event_sent(event_id):
                 SET sent_at = CURRENT_TIMESTAMP,
                     attempts = attempts + 1,
                     last_error = NULL,
+                    fbp = NULL,
+                    fbc = NULL,
                     claimed_at = NULL
                 WHERE id = %s AND sent_at IS NULL
             """, (event_id,))
