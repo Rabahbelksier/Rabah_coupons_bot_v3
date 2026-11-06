@@ -29,6 +29,10 @@ def _send_telegram_start_event(event):
         user_data["fbp"] = event["fbp"]
     if event.get("fbc"):
         user_data["fbc"] = event["fbc"]
+    if event.get("client_ip_address"):
+        user_data["client_ip_address"] = event["client_ip_address"]
+    if event.get("client_user_agent"):
+        user_data["client_user_agent"] = event["client_user_agent"]
 
     payload = {
         "data": [

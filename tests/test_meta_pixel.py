@@ -19,7 +19,7 @@ class MetaAttributionDatabaseTests(TestCase):
         get_connection.return_value = self.connection
         self.cursor.fetchone.return_value = (42,)
         self.cursor.fetchall.return_value = [
-            (17, 123, "campaign-current", None, None),
+            (17, 123, "campaign-current", None, None, None, None),
         ]
 
         pending = db.save_user(
@@ -55,6 +55,8 @@ class MetaAttributionDatabaseTests(TestCase):
                 "campaign-current",
                 "fb.1.1730000000000.browser",
                 "fb.1.1730000000000.click",
+                "203.0.113.17",
+                "TestBrowser/1.0",
             ),
             (42,),
         ]
@@ -65,6 +67,8 @@ class MetaAttributionDatabaseTests(TestCase):
                 "campaign-current",
                 "fb.1.1730000000000.browser",
                 "fb.1.1730000000000.click",
+                "203.0.113.17",
+                "TestBrowser/1.0",
             ),
         ]
 
@@ -82,6 +86,8 @@ class MetaAttributionDatabaseTests(TestCase):
             "attribution_id": "campaign-current",
             "fbp": "fb.1.1730000000000.browser",
             "fbc": "fb.1.1730000000000.click",
+            "client_ip_address": "203.0.113.17",
+            "client_user_agent": "TestBrowser/1.0",
         }])
         sql_calls = [
             call.args[0]
@@ -105,6 +111,8 @@ class MetaAttributionDatabaseTests(TestCase):
             "campaign-current",
             fbp="fb.1.1730000000000.browser",
             fbc="fb.1.1730000000000.click",
+            client_ip_address="203.0.113.17",
+            client_user_agent="TestBrowser/1.0",
         )
 
         self.assertEqual(token, "m_random-token")
@@ -126,6 +134,8 @@ class MetaAttributionDatabaseTests(TestCase):
                 "campaign-current",
                 "fb.1.1730000000000.browser",
                 "fb.1.1730000000000.click",
+                "203.0.113.17",
+                "TestBrowser/1.0",
             ),
         )
         self.connection.commit.assert_called_once()
@@ -224,6 +234,10 @@ class MetaPixelEventTests(TestCase):
                 base_url="https://bot.example",
                 headers={"Origin": "https://bot.example"},
                 json={},
+                environ_overrides={
+                    "HTTP_X_FORWARDED_FOR": "192.0.2.4, 203.0.113.17",
+                    "HTTP_USER_AGENT": "TestBrowser/1.0",
+                },
             )
 
         self.assertEqual(response.status_code, 200)
@@ -235,6 +249,8 @@ class MetaPixelEventTests(TestCase):
             "campaign-current",
             fbp=None,
             fbc=None,
+            client_ip_address="203.0.113.17",
+            client_user_agent="TestBrowser/1.0",
         )
 
     def test_landing_page_rejects_invalid_telegram_payload(self):
@@ -274,6 +290,10 @@ class MetaPixelEventTests(TestCase):
                     "fbp": "fb.1.1730000000000.browser",
                     "fbc": "fb.1.1730000000000.click",
                 },
+                environ_overrides={
+                    "HTTP_X_FORWARDED_FOR": "192.0.2.4, 203.0.113.9",
+                    "HTTP_USER_AGENT": "TestBrowser/1.0",
+                },
             )
 
         self.assertEqual(response.status_code, 200)
@@ -285,6 +305,8 @@ class MetaPixelEventTests(TestCase):
             "campaign-current",
             fbp="fb.1.1730000000000.browser",
             fbc="fb.1.1730000000000.click",
+            client_ip_address="203.0.113.9",
+            client_user_agent="TestBrowser/1.0",
         )
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
@@ -373,11 +395,15 @@ class MetaPixelEventTests(TestCase):
                 "attribution_id": "campaign-current",
                 "fbp": "fb.1.1730000000000.browser",
                 "fbc": "fb.1.1730000000000.click",
+                "client_ip_address": "203.0.113.17",
+                "client_user_agent": "TestBrowser/1.0",
             })
 
         user_data = post.call_args.kwargs["json"]["data"][0]["user_data"]
         self.assertEqual(user_data["fbp"], "fb.1.1730000000000.browser")
         self.assertEqual(user_data["fbc"], "fb.1.1730000000000.click")
+        self.assertEqual(user_data["client_ip_address"], "203.0.113.17")
+        self.assertEqual(user_data["client_user_agent"], "TestBrowser/1.0")
 
     @patch.object(meta_pixel.requests, "post")
     def test_omits_test_event_code_when_not_configured(self, post):

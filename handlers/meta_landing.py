@@ -1,3 +1,4 @@
+import ipaddress
 import re
 from urllib.parse import urlsplit
 
@@ -19,6 +20,28 @@ def _meta_cookie_value(value):
         return None
     value = value.strip()
     if len(value) > 255 or not _META_COOKIE_PATTERN.fullmatch(value):
+        return None
+    return value
+
+
+def _client_ip_address():
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    candidates = forwarded_for.split(",") if forwarded_for else []
+    if candidates:
+        # The hosting ingress appends the connecting client as the rightmost
+        # address; earlier values may have been supplied by the browser.
+        candidate = candidates[-1].strip()
+    else:
+        candidate = request.remote_addr or ""
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return None
+
+
+def _client_user_agent():
+    value = request.headers.get("User-Agent", "").strip()
+    if not value or len(value) > 1000 or any(ord(char) < 32 for char in value):
         return None
     return value
 
@@ -167,6 +190,8 @@ def create_bot_attribution():
         META_ATTRIBUTION_ID,
         fbp=fbp,
         fbc=fbc,
+        client_ip_address=_client_ip_address(),
+        client_user_agent=_client_user_agent(),
     )
 
     response = jsonify({

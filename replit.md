@@ -114,13 +114,18 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
   Meta event is queued only when that value changes; repeat starts with the same
   value do not create duplicate events.
 - `/bot` reads valid `_fbp` and `_fbc` browser cookies and sends them to a
-  same-origin endpoint. When either exists, the server stores them briefly under
-  a random Telegram start token; cookie values are never placed in the Telegram
+  same-origin endpoint. The server also captures the visitor IP and browser
+  User-Agent from that request. Available values are stored briefly under a
+  random Telegram start token; these values are never placed in the Telegram
   URL. `/start` consumes that token only for the currently configured campaign.
-- Forward these advertising identifiers only where the site's privacy notice
-  and user-consent requirements allow it.
-- The click-token records expire after 24 hours. Browser IDs are attached to the
-  queued CAPI event and cleared from the outbox after successful delivery.
+- For forwarded IP headers, use the rightmost `X-Forwarded-For` address, which
+  the hosting ingress appends for the connecting client; validate it as an IP
+  address. Do not treat earlier forwarded entries as trusted client identity.
+- Forward these matching data only where the site's privacy notice and
+  user-consent requirements allow it.
+- Click-token records expire after 24 hours. Available browser identifiers, IP,
+  and User-Agent are attached to the queued CAPI event and cleared from the
+  outbox after successful delivery.
 - Pending `TelegramBotStart` events are sent to the same Pixel through Meta's
   Conversions API. Failed sends remain queued and can be retried on a later
   matching `/start`.
@@ -129,7 +134,7 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - **user_bot** table: first_name (TEXT), last_name (TEXT), chat_id (BIGINT PRIMARY KEY), meta_source_id (TEXT)
 - **meta_event_outbox** table: durable retry records for Meta subscription events
 - **meta_click_attributions** table: short-lived server-side mapping between an
-  opaque Telegram start token, campaign code, and available browser IDs
+  opaque Telegram start token, campaign code, and available matching data
 
 ## Deployment Files
 - `requirements.txt`: Python dependencies
