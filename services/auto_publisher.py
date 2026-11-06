@@ -43,11 +43,11 @@ def _publication_keyboard():
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(
             "تطبيق Offers 365",
-            url="https://offres365page.up.railway.app/",
+            url="https://play.google.com/store/apps/details?id=com.offers365.app",
         ),
         InlineKeyboardButton(
-            "بوت الذكاء الاصطناعي",
-            url="https://t.me/rabahcoupons1bot",
+            "بوت عروض AI",
+            url="https://t.me/rabahcoupons1bot/channe",
         ),
     ]])
 
