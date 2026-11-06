@@ -99,9 +99,25 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - `CHANNEL_AI_BATCH_WAIT_SECONDS`: Wait before sending an incomplete channel
   batch (default 3600 seconds)
 - `CHANNEL_TELEGRAM_REPLACEMENT_LINK`: Optional replacement for Telegram links in stored copies
+- `META_PIXEL_ID`: Pixel ID used by the bot-hosted `/bot` redirect page
+- `META_ATTRIBUTION_ID`: Campaign value embedded in Telegram's `/start` payload.
+  Telegram accepts 1–64 characters from letters, numbers, `_`, and `-`.
+- `META_CAPI_ACCESS_TOKEN`: Meta Conversions API token; keep this in Secrets,
+  never in source control
+
+## Meta Telegram Attribution
+- `/bot` sends the existing browser `PageView` and `TelegramClick` events, then
+  redirects to `https://t.me/rabahcoupons1bot?start=<META_ATTRIBUTION_ID>`.
+- `/start` saves a matching campaign value in `user_bot.meta_source_id`. A new
+  Meta event is queued only when that value changes; repeat starts with the same
+  value do not create duplicate events.
+- Pending `TelegramBotStart` events are sent to the same Pixel through Meta's
+  Conversions API. Failed sends remain queued and can be retried on a later
+  matching `/start`.
 
 ## Database Schema
-- **user_bot** table: first_name (TEXT), last_name (TEXT), chat_id (BIGINT PRIMARY KEY)
+- **user_bot** table: first_name (TEXT), last_name (TEXT), chat_id (BIGINT PRIMARY KEY), meta_source_id (TEXT)
+- **meta_event_outbox** table: durable retry records for Meta subscription events
 
 ## Deployment Files
 - `requirements.txt`: Python dependencies

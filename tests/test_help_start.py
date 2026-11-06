@@ -13,7 +13,11 @@ from handlers.help import (
     help_command,
     help_topic_callback,
 )
-from handlers.start import start, start_ai_callback
+from handlers.start import (
+    send_pending_telegram_start_events,
+    start,
+    start_ai_callback,
+)
 
 
 class HelpAndStartTests(unittest.IsolatedAsyncioTestCase):
@@ -27,7 +31,7 @@ class HelpAndStartTests(unittest.IsolatedAsyncioTestCase):
             ),
             message=SimpleNamespace(reply_text=reply_text),
         )
-        context = SimpleNamespace(user_data={})
+        context = SimpleNamespace(user_data={}, args=[])
 
         with patch("handlers.start.save_user"):
             await start(update, context)
@@ -41,6 +45,59 @@ class HelpAndStartTests(unittest.IsolatedAsyncioTestCase):
             for button in row
         ]
         self.assertIn(MORE_DETAILS_BUTTON_TEXT, labels)
+
+    async def test_start_saves_matching_payload_and_dispatches_pending_events(self):
+        reply_text = AsyncMock()
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(
+                id=456,
+                first_name="New",
+                last_name="User",
+            ),
+            message=SimpleNamespace(reply_text=reply_text),
+        )
+        context = SimpleNamespace(user_data={}, args=["campaign-1"])
+        pending = [{"id": 9, "chat_id": 456, "attribution_id": "campaign-1"}]
+
+        with (
+            patch("handlers.start.META_ATTRIBUTION_ID", "campaign-1"),
+            patch("handlers.start.save_user", return_value=pending) as save_user,
+            patch(
+                "handlers.start.asyncio.to_thread",
+                new=AsyncMock(),
+            ) as to_thread,
+        ):
+            await start(update, context)
+
+        save_user.assert_called_once_with(
+            456,
+            "New",
+            "User",
+            attribution_id="campaign-1",
+            expected_attribution_id="campaign-1",
+        )
+        to_thread.assert_awaited_once_with(
+            send_pending_telegram_start_events,
+            pending,
+        )
+        reply_text.assert_awaited_once()
+
+    async def test_start_does_not_pass_multiword_payload_as_attribution(self):
+        reply_text = AsyncMock()
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(
+                id=789,
+                first_name="Existing",
+                last_name=None,
+            ),
+            message=SimpleNamespace(reply_text=reply_text),
+        )
+        context = SimpleNamespace(user_data={}, args=["campaign-1", "extra"])
+
+        with patch("handlers.start.save_user") as save_user:
+            await start(update, context)
+
+        self.assertIsNone(save_user.call_args.kwargs["attribution_id"])
 
     async def test_help_command_sends_shared_help_menu(self):
         reply_text = AsyncMock()

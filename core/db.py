@@ -171,6 +171,7 @@ def init_db():
                 first_name TEXT,
                 last_name TEXT,
                 chat_id BIGINT PRIMARY KEY,
+                meta_source_id TEXT,
                 requests_today INTEGER NOT NULL DEFAULT 0,
                 requests_this_month INTEGER NOT NULL DEFAULT 0,
                 requests_last_month INTEGER NOT NULL DEFAULT 0,
@@ -184,12 +185,34 @@ def init_db():
             "requests_last_month INTEGER NOT NULL DEFAULT 0",
             "activity_day DATE",
             "activity_month DATE",
+            "meta_source_id TEXT",
         ):
             column_name = column_definition.split()[0]
             cur.execute(
                 f"ALTER TABLE IF EXISTS user_bot ADD COLUMN IF NOT EXISTS "
                 f"{column_name} {column_definition[len(column_name) + 1:]}"
             )
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS meta_event_outbox (
+                id BIGSERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                attribution_id TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at TIMESTAMPTZ,
+                claimed_at TIMESTAMPTZ,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT
+            )
+        """)
+        cur.execute("""
+            ALTER TABLE IF EXISTS meta_event_outbox
+            ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS meta_event_outbox_pending_idx
+            ON meta_event_outbox (id)
+            WHERE sent_at IS NULL
+        """)
         cur.execute("""
             UPDATE user_bot
             SET requests_today = COALESCE(requests_today, 0),
@@ -3082,25 +3105,152 @@ def delete_expired_channel_posts():
             conn.close()
 
 
-def save_user(chat_id, first_name, last_name):
+def save_user(
+    chat_id,
+    first_name,
+    last_name,
+    attribution_id=None,
+    expected_attribution_id=None,
+):
     if not DATABASE_URL:
-        return
+        return []
+    conn = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO user_bot (
-                chat_id, first_name, last_name,
-                requests_today, requests_this_month, requests_last_month
+        pending_events = []
+        with conn.cursor() as cur:
+            is_attributed = (
+                bool(attribution_id)
+                and bool(expected_attribution_id)
+                and attribution_id == expected_attribution_id
             )
-            VALUES (%s, %s, %s, 0, 0, 0)
-            ON CONFLICT (chat_id) DO NOTHING
-        """, (chat_id, first_name, last_name))
+            if is_attributed:
+                cur.execute("""
+                    INSERT INTO user_bot (
+                        chat_id, first_name, last_name, meta_source_id,
+                        requests_today, requests_this_month,
+                        requests_last_month
+                    )
+                    VALUES (%s, %s, %s, %s, 0, 0, 0)
+                    ON CONFLICT (chat_id) DO UPDATE
+                    SET meta_source_id = EXCLUDED.meta_source_id
+                    WHERE user_bot.meta_source_id
+                        IS DISTINCT FROM EXCLUDED.meta_source_id
+                    RETURNING chat_id
+                """, (
+                    chat_id,
+                    first_name,
+                    last_name,
+                    attribution_id,
+                ))
+                changed_user = cur.fetchone()
+                if changed_user:
+                    cur.execute("""
+                        INSERT INTO meta_event_outbox (
+                            chat_id, attribution_id
+                        )
+                        VALUES (%s, %s)
+                    """, (chat_id, attribution_id))
+
+                cur.execute("""
+                    WITH candidates AS (
+                        SELECT id
+                        FROM meta_event_outbox
+                        WHERE chat_id = %s
+                          AND sent_at IS NULL
+                          AND (
+                              claimed_at IS NULL
+                              OR claimed_at < CURRENT_TIMESTAMP
+                                  - INTERVAL '1 minute'
+                          )
+                        ORDER BY id
+                        LIMIT 20
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE meta_event_outbox AS queued
+                    SET claimed_at = CURRENT_TIMESTAMP
+                    FROM candidates
+                    WHERE queued.id = candidates.id
+                    RETURNING queued.id, queued.chat_id,
+                              queued.attribution_id
+                """, (chat_id,))
+                pending_events = [
+                    {
+                        "id": event_id,
+                        "chat_id": event_chat_id,
+                        "attribution_id": source_id,
+                    }
+                    for event_id, event_chat_id, source_id in cur.fetchall()
+                ]
+            else:
+                cur.execute("""
+                    INSERT INTO user_bot (
+                        chat_id, first_name, last_name,
+                        requests_today, requests_this_month,
+                        requests_last_month
+                    )
+                    VALUES (%s, %s, %s, 0, 0, 0)
+                    ON CONFLICT (chat_id) DO NOTHING
+                """, (chat_id, first_name, last_name))
         conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Error saving user: {e}")
+        return pending_events
+    except Exception:
+        if conn:
+            conn.rollback()
+        logger.exception("Error saving user start for %s", chat_id)
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def mark_meta_event_sent(event_id):
+    if not DATABASE_URL:
+        return
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE meta_event_outbox
+                SET sent_at = CURRENT_TIMESTAMP,
+                    attempts = attempts + 1,
+                    last_error = NULL,
+                    claimed_at = NULL
+                WHERE id = %s AND sent_at IS NULL
+            """, (event_id,))
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        logger.exception("Could not mark Meta event %s as sent", event_id)
+    finally:
+        if conn:
+            conn.close()
+
+
+def mark_meta_event_failed(event_id, error):
+    if not DATABASE_URL:
+        return
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE meta_event_outbox
+                SET attempts = attempts + 1,
+                    last_error = %s,
+                    claimed_at = NULL
+                WHERE id = %s AND sent_at IS NULL
+            """, (error[:500], event_id))
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        logger.exception("Could not record Meta event failure %s", event_id)
+    finally:
+        if conn:
+            conn.close()
 
 
 def record_user_activity(chat_id, first_name="", last_name=""):

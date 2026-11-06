@@ -49,3 +49,8 @@ externalPort = 80
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 180000
+
+[userenv]
+
+[userenv.development]
+META_PIXEL_ID = "2501616057031511"

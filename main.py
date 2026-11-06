@@ -17,6 +17,8 @@ from telegram.ext import (
 from config import (
     CHANNEL_MONITOR_ENABLED,
     ERROR_LOG_CLEANUP_INTERVAL_SECONDS,
+    META_ATTRIBUTION_ID,
+    META_PIXEL_ID,
     PUBLIC_URL,
     TOKEN,
     PORT,
@@ -27,6 +29,7 @@ from handlers.help import (
     help_topic_callback,
     more_details_callback,
 )
+from handlers.meta_landing import meta_landing
 from handlers.start import start, start_ai_callback
 from handlers.coupons import coupons_callback, coupons_command
 from handlers.admin import (
@@ -67,6 +70,7 @@ _gemini_phrase_cache_startup_lock = threading.Lock()
 _gemini_phrase_cache_startup_scheduled = False
 
 app = Flask(__name__)
+app.register_blueprint(meta_landing)
 
 SCRAPE_API_KEY = os.getenv('SCRAPE_API_KEY', '')
 
