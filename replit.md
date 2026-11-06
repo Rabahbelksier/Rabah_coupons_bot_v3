@@ -104,6 +104,8 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
   Telegram accepts 1–64 characters from letters, numbers, `_`, and `-`.
 - `META_CAPI_ACCESS_TOKEN`: Meta Conversions API token; keep this in Secrets,
   never in source control
+- `META_TEST_EVENT_CODE`: Optional Meta Events Manager test code. Set this only
+  while testing server events; leave it unset for normal production delivery.
 
 ## Meta Telegram Attribution
 - `/bot` sends the existing browser `PageView` and `TelegramClick` events, then

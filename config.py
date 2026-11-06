@@ -29,6 +29,7 @@ TOKEN = os.getenv('TELEGRAM_TOKEN')
 META_PIXEL_ID = os.getenv('META_PIXEL_ID', '').strip()
 META_ATTRIBUTION_ID = os.getenv('META_ATTRIBUTION_ID', '').strip()
 META_CAPI_ACCESS_TOKEN = os.getenv('META_CAPI_ACCESS_TOKEN', '').strip()
+META_TEST_EVENT_CODE = os.getenv('META_TEST_EVENT_CODE', '').strip()
 # Prefer the explicitly configured external database when available. Replit's
 # DATABASE_URL is the built-in development database in this workspace.
 DATABASE_URL = os.getenv('EXTERNAL_DATABASE_URL') or os.getenv('DATABASE_URL')

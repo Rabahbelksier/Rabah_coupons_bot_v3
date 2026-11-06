@@ -7,4 +7,4 @@ Only attribute and report TelegramBotStart when the incoming start payload exact
 
 **Why:** the user wants reliable ad-campaign attribution without counting ordinary bot starts or repeated starts as new subscriptions.
 
-**How to apply:** keep the campaign code, Pixel ID, and CAPI token in environment configuration/secrets; do not hardcode them or alter ad posts/production destinations without a separate request.
+**How to apply:** keep the campaign code, Pixel ID, and CAPI token in environment configuration/secrets; optionally set a Meta test-event code only during verification, then unset it for normal delivery. Do not hardcode these values or alter ad posts/production destinations without a separate request.

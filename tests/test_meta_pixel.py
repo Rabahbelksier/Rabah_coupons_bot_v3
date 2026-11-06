@@ -134,6 +134,7 @@ class MetaPixelEventTests(TestCase):
         with (
             patch.object(meta_pixel, "META_PIXEL_ID", "123456"),
             patch.object(meta_pixel, "META_CAPI_ACCESS_TOKEN", "test-token"),
+            patch.object(meta_pixel, "META_TEST_EVENT_CODE", "TEST123"),
         ):
             meta_pixel._send_telegram_start_event({
                 "id": 17,
@@ -148,6 +149,7 @@ class MetaPixelEventTests(TestCase):
             "https://graph.facebook.com/v26.0/123456/events",
         )
         self.assertEqual(kwargs["params"], {"access_token": "test-token"})
+        self.assertEqual(kwargs["json"]["test_event_code"], "TEST123")
         event = kwargs["json"]["data"][0]
         self.assertEqual(event["event_name"], "TelegramBotStart")
         self.assertEqual(event["event_id"], "telegram-start-17")
@@ -161,6 +163,27 @@ class MetaPixelEventTests(TestCase):
             "campaign-current",
         )
         response.raise_for_status.assert_called_once()
+
+    @patch.object(meta_pixel.requests, "post")
+    def test_omits_test_event_code_when_not_configured(self, post):
+        response = Mock()
+        response.json.return_value = {"events_received": 1}
+        post.return_value = response
+
+        with (
+            patch.object(meta_pixel, "META_PIXEL_ID", "123456"),
+            patch.object(meta_pixel, "META_CAPI_ACCESS_TOKEN", "test-token"),
+            patch.object(meta_pixel, "META_TEST_EVENT_CODE", ""),
+        ):
+            meta_pixel._send_telegram_start_event({
+                "id": 18,
+                "chat_id": 456,
+                "attribution_id": "campaign-current",
+            })
+
+        payload = post.call_args.kwargs["json"]
+        self.assertNotIn("test_event_code", payload)
+        self.assertEqual(payload["data"][0]["event_name"], "TelegramBotStart")
 
     @patch.object(meta_pixel, "mark_meta_event_sent")
     @patch.object(meta_pixel, "_send_telegram_start_event")

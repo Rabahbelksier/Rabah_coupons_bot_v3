@@ -4,7 +4,11 @@ import time
 
 import requests
 
-from config import META_CAPI_ACCESS_TOKEN, META_PIXEL_ID
+from config import (
+    META_CAPI_ACCESS_TOKEN,
+    META_PIXEL_ID,
+    META_TEST_EVENT_CODE,
+)
 from core.db import mark_meta_event_failed, mark_meta_event_sent
 
 logger = logging.getLogger(__name__)
@@ -34,6 +38,9 @@ def _send_telegram_start_event(event):
             }
         ]
     }
+    if META_TEST_EVENT_CODE:
+        payload["test_event_code"] = META_TEST_EVENT_CODE
+
     response = requests.post(
         (
             f"https://graph.facebook.com/{META_GRAPH_API_VERSION}/"
