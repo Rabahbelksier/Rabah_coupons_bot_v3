@@ -28,6 +28,8 @@ from handlers.help import (
     more_details_callback,
 )
 from handlers.start import start, start_ai_callback
+from handlers.meta_redirect import meta_redirect
+from services.meta_tracking import meta_delivery_worker
 from handlers.coupons import coupons_callback, coupons_command
 from handlers.admin import (
     ADMIN_CALLBACK_PATTERN,
@@ -68,6 +70,7 @@ _gemini_phrase_cache_startup_lock = threading.Lock()
 _gemini_phrase_cache_startup_scheduled = False
 
 app = Flask(__name__)
+app.register_blueprint(meta_redirect)
 
 SCRAPE_API_KEY = os.getenv('SCRAPE_API_KEY', '')
 
@@ -206,6 +209,10 @@ async def _cleanup_error_logs_loop():
 def _stop_background_services():
     _webhook_refresh_stop.set()
     try:
+        meta_delivery_worker.stop()
+    except Exception:
+        logger.warning("Meta delivery worker shutdown failed")
+    try:
         _runtime.stop()
     except Exception:
         logger.exception("Telegram runtime shutdown failed")
@@ -227,6 +234,11 @@ def _on_telegram_ready(application):
     global _gemini_phrase_cache_startup_scheduled
     application.bot_data["channel_monitor"] = channel_monitor
     application.bot_data["auto_publisher"] = auto_publisher
+    # Local retention cleanup also runs when tracking is switched off.
+    try:
+        meta_delivery_worker.start()
+    except Exception:
+        logger.warning("Meta delivery worker startup failed")
     try:
         cart_price_updater.start()
     except Exception:

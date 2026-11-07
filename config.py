@@ -30,6 +30,23 @@ TOKEN = os.getenv('TELEGRAM_TOKEN')
 # DATABASE_URL is the built-in development database in this workspace.
 DATABASE_URL = os.getenv('EXTERNAL_DATABASE_URL') or os.getenv('DATABASE_URL')
 PORT = int(os.getenv('PORT', 5000))
+META_TRACKING_ENABLED = os.getenv('META_TRACKING_ENABLED', '').lower() in {
+    '1', 'true', 'yes', 'on',
+}
+META_PIXEL_ID = os.getenv('META_PIXEL_ID', '').strip()
+META_ATTRIBUTION_ID = os.getenv('META_ATTRIBUTION_ID', '').strip()
+META_CAPI_ACCESS_TOKEN = os.getenv('META_CAPI_ACCESS_TOKEN', '')
+META_TEST_EVENT_CODE = os.getenv('META_TEST_EVENT_CODE', '').strip()
+META_GRAPH_API_VERSION = os.getenv('META_GRAPH_API_VERSION', 'v25.0').strip()
+META_VISIT_TTL_SECONDS = min(
+    _optional_positive_int('META_VISIT_TTL_SECONDS', 24 * 60 * 60),
+    7 * 24 * 60 * 60,
+)
+# Trust forwarding headers only when the deployment strips incoming spoofed
+# headers and appends this exact number of proxy hops.
+META_TRUSTED_PROXY_HOPS = min(
+    _optional_positive_int('META_TRUSTED_PROXY_HOPS', 0), 10,
+)
 RENDER_EXTERNAL_URL = os.getenv('RENDER_EXTERNAL_URL', '')
 RAILWAY_PUBLIC_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', '')
 PUBLIC_URL = (

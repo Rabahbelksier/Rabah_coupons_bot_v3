@@ -103,6 +103,21 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 ## Database Schema
 - **user_bot** table: first_name (TEXT), last_name (TEXT), chat_id (BIGINT PRIMARY KEY)
 
+## Meta campaign attribution
+- The existing Flask server serves `/bot`; no separate website process is needed.
+- Tracking is off by default. `META_TRACKING_ENABLED=true` requires a configured
+  `META_PIXEL_ID`, `META_ATTRIBUTION_ID`, `META_CAPI_ACCESS_TOKEN` and database.
+- The page sends browser `PageView` and custom `TelegramClick`, then redirects
+  after 800 ms using a unique visit token. A new user's eligible `/start` queues
+  custom `TelegramBotStart` with `action_source=chat`; old/organic users are not
+  reattributed. Direct campaign start links are also supported.
+- `user_bot.meta_source_id` stores the fixed campaign source, not the visit token.
+- The optional `META_TEST_EVENT_CODE` applies to newly queued CAPI test events.
+  All settings, privacy prerequisites, retention and rollout instructions are
+  documented in `docs/meta-tracking.md`.
+- Do not enable tracking before the operator has established any required
+  consent/lawful basis; the invisible redirect is not a consent interface.
+
 ## Deployment Files
 - `requirements.txt`: Python dependencies
 - `Procfile`: `web: gunicorn main:app`

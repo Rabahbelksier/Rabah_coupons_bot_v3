@@ -151,8 +151,9 @@ _CATEGORY_CONFLICT_TERMS = {
 }
 
 
-def get_db_connection():
-    conn = psycopg2.connect(DATABASE_URL)
+def get_db_connection(*, connect_timeout=None):
+    options = {"connect_timeout": connect_timeout} if connect_timeout else {}
+    conn = psycopg2.connect(DATABASE_URL, **options)
     with conn.cursor() as cursor:
         cursor.execute("SET TIME ZONE %s", (_DATABASE_TIMEZONE,))
     return conn
@@ -190,6 +191,8 @@ def init_db():
                 f"ALTER TABLE IF EXISTS user_bot ADD COLUMN IF NOT EXISTS "
                 f"{column_name} {column_definition[len(column_name) + 1:]}"
             )
+        from core.meta_store import SCHEMA as meta_schema
+        cur.execute(meta_schema)
         cur.execute("""
             UPDATE user_bot
             SET requests_today = COALESCE(requests_today, 0),
@@ -3082,9 +3085,18 @@ def delete_expired_channel_posts():
             conn.close()
 
 
-def save_user(chat_id, first_name, last_name):
+def save_user(chat_id, first_name, last_name, *, meta_start=None):
     if not DATABASE_URL:
         return
+    if meta_start is not None:
+        from core.meta_store import register_start
+        try:
+            return register_start(chat_id, first_name, last_name, meta_start)
+        except Exception:
+            # Do not fall back to an unattributed insert: a failed transaction
+            # must not permanently consume the user's first-use eligibility.
+            logger.warning("User registration with Meta attribution unavailable")
+            return False
     try:
         conn = get_db_connection()
         cur = conn.cursor()

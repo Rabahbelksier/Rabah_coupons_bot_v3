@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>الانتقال إلى بوت تلجرام</title>
+</head>
+<body>
+  <script>
+    (function () {
+      const target = {{ target | tojson }};
+      // Schedule navigation first: a blocked Pixel or failed beacon cannot
+      // prevent opening Telegram.
+      window.setTimeout(function () { window.location.replace(target); }, 800);
+      {% if pixel %}
+      const token = {{ token | tojson }};
+      function cookie(name) {
+        const part = document.cookie.split("; ").find(x => x.startsWith(name + "="));
+        return part ? part.slice(name.length + 1) : "";
+      }
+      function enrich() {
+        if (!token) return;
+        const data = JSON.stringify({token: token, fbp: cookie("_fbp")});
+        try {
+          navigator.sendBeacon("/bot/visit", new Blob([data], {type: "application/json"}));
+        } catch (_) {
+          // Best effort only; never wait for the network before redirecting.
+        }
+      }
+      !function(f,b,e,v,n,t,s)
+      {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+      n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+      if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+      n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;
+      s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+      (window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+      fbq('init', {{ pixel | tojson }});
+      fbq('track', 'PageView');
+      fbq('trackCustom', 'TelegramClick');
+      window.setTimeout(enrich, 350);
+      window.setTimeout(enrich, 700);
+      window.addEventListener("pagehide", enrich);
+      {% endif %}
+    })();
+  </script>
+  <noscript><a href="{{ target }}">فتح بوت تلجرام</a></noscript>
+</body>
+</html>

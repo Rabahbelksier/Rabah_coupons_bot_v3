@@ -1,8 +1,10 @@
+import asyncio
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from core.db import save_user
+from services.meta_tracking import start_attribution
 from handlers.ai_search import AI_SEARCH_BUTTON_TEXT, _clear_ai_search_state
 from handlers.help import (
     MORE_DETAILS_BUTTON_TEXT,
@@ -34,7 +36,13 @@ def start_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _clear_ai_search_state(context)
     user = update.effective_user
-    save_user(user.id, user.first_name, user.last_name or '')
+    message_date = getattr(update.message, "date", None)
+    event_time = message_date.timestamp() if hasattr(message_date, "timestamp") else None
+    attribution = start_attribution(getattr(context, "args", None), event_time)
+    kwargs = {"meta_start": attribution} if attribution is not None else {}
+    await asyncio.to_thread(
+        save_user, user.id, user.first_name, user.last_name or '', **kwargs,
+    )
     await update.message.reply_text(
         START_TEXT,
         reply_markup=start_keyboard(),
