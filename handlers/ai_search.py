@@ -19,7 +19,6 @@ from telegram.ext import ContextTypes
 from config import AI_USER_REQUEST_TIMEOUT_SECONDS
 from core.ai import (
     GeminiError,
-    _local_parse_user_request,
     _safe_local_user_request_with_cache,
     parse_user_request,
 )

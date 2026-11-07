@@ -22,7 +22,6 @@ from core.db import (
 from handlers.ai_search import (
     PhotoDeliveryUncertainError,
     _caption_for_content,
-    _load_post_photo,
     _photo_to_input_file,
     _post_content,
     _send_post_photo_with_fallback,

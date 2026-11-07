@@ -8,7 +8,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.coupons import (
     get_available_coupons,
-    parse_coupon_value,
     parse_numeric_value,
 )
 from core.db import get_db_connection, is_feature_enabled

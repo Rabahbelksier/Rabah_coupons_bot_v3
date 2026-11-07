@@ -18,8 +18,6 @@ from telegram.request import HTTPXRequest
 from config import (
     CHANNEL_MONITOR_ENABLED,
     ERROR_LOG_CLEANUP_INTERVAL_SECONDS,
-    META_ATTRIBUTION_ID,
-    META_PIXEL_ID,
     PUBLIC_URL,
     TOKEN,
     PORT,
