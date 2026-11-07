@@ -20,3 +20,4 @@
 - [Channel shipping-country rule](channel-shipping-country.md) — any explicitly named country in a product post qualifies as a destination, even outside shipping wording.
 - [Automatic publisher limits](automatic-publisher-limits.md) — publish at 5-item thresholds, choose newest regardless of price, and cap each selected offer at two sends per day.
 - [Meta Telegram attribution](meta-telegram-attribution.md) — send TelegramBotStart only for the configured campaign code when the user's stored source changes.
+- [Production hosting](production-hosting.md) — production runs on Railway from GitHub; preserve build/start configuration until its actual use is confirmed.
