@@ -7,6 +7,15 @@ Automatic channel publication triggers at cumulative product thresholds 5, 10, 1
 
 **Why:** The user explicitly requested newest-first selection regardless of price, plus this threshold and daily-cap behavior.
 
+Channel analysis batch sizing is separate from publication thresholds and from
+the number of offer links generated for a manually submitted product.
+
+**Why:** The user requested smaller channel-analysis/link-processing batches
+while requiring the rest of the bot's existing behavior to remain unchanged.
+
+**How to apply:** Do not treat unrelated five-item publishing thresholds or
+manual offer counts as channel-analysis batch settings when changing ingestion.
+
 **How to apply:** Preserve threshold-level idempotency. Enforce the cap using persisted delivery records per selected source offer, count active claims as reservations, and keep skipped thresholds terminal. Persist a sending state before calling Telegram; ambiguous send outcomes must not be retried automatically. The report uses the database timezone for day boundaries.
 
 Automatic publishing must not retry a Telegram send when the request outcome is ambiguous. Persist the send boundary before making the request, and mark uncertain outcomes terminal rather than retryable.

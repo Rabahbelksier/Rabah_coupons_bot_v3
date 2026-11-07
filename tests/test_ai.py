@@ -1,6 +1,7 @@
 import hashlib
 import re
 import unittest
+from config import CHANNEL_AI_BATCH_SIZE
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -2216,7 +2217,7 @@ class AiParsingTests(unittest.TestCase):
         call_ai.side_effect = respond
         posts = [
             {"post_id": post_id, "text": "عرض هاتف\n" + ("تفصيل " * 2_000)}
-            for post_id in range(1, 6)
+            for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)
         ]
 
         result = analyze_channel_posts(posts)
@@ -2224,11 +2225,11 @@ class AiParsingTests(unittest.TestCase):
         self.assertGreater(call_ai.call_count, 1)
         self.assertEqual(
             [analysis["title"] for analysis in result],
-            [f"Product {post_id}" for post_id in range(1, 6)],
+            [f"Product {post_id}" for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)],
         )
         self.assertEqual(
             [analysis.ai_provider for analysis in result],
-            ["Gemini"] * 5,
+            ["Gemini"] * CHANNEL_AI_BATCH_SIZE,
         )
 
     @patch("core.ai._call_ai")
@@ -2251,7 +2252,7 @@ class AiParsingTests(unittest.TestCase):
             )
 
         call_ai.side_effect = respond
-        for batch_size in (1, 3, 5):
+        for batch_size in (1, 3, CHANNEL_AI_BATCH_SIZE):
             with self.subTest(batch_size=batch_size):
                 call_ai.reset_mock()
                 posts = [
@@ -2270,6 +2271,19 @@ class AiParsingTests(unittest.TestCase):
                     len(_channel_analysis_prompt(posts)),
                     CHANNEL_AI_MAX_PROMPT_CHARS,
                 )
+
+    @patch("core.ai._call_ai")
+    def test_rejects_empty_and_oversized_channel_batches_before_calling_ai(self, call_ai):
+        self.assertEqual(CHANNEL_AI_BATCH_SIZE, 4)
+        for batch_size in (0, 5, 6):
+            with self.subTest(batch_size=batch_size):
+                posts = [
+                    {"post_id": post_id, "text": "إعلان"}
+                    for post_id in range(batch_size)
+                ]
+                with self.assertRaises(GeminiError):
+                    analyze_channel_posts(posts)
+        call_ai.assert_not_called()
 
     @patch("core.ai._call_ai")
     def test_reports_missing_channel_batch_items_without_retrying_singletons(

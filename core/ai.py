@@ -12,6 +12,7 @@ import requests
 
 from config import (
     AI_PROVIDER_TIMEOUT_SECONDS,
+    CHANNEL_AI_BATCH_SIZE,
     CHANNEL_AI_MAX_PROMPT_CHARS,
     GEMINI_API_KEY,
     GEMINI_KEYWORD_CACHE_SYNC_INTERVAL_SECONDS,
@@ -2840,9 +2841,11 @@ def _analyze_channel_post_chunk(posts, request_kind="channel"):
 
 
 def analyze_channel_posts(posts, request_kind="channel"):
-    """Classify up to five channel posts in one or more safe-sized requests."""
-    if not posts or len(posts) > 5:
-        raise GeminiError("Channel AI batches must contain between 1 and 5 posts")
+    """Classify up to the configured batch size in safe-sized requests."""
+    if not posts or len(posts) > CHANNEL_AI_BATCH_SIZE:
+        raise GeminiError(
+            f"Channel AI batches must contain between 1 and {CHANNEL_AI_BATCH_SIZE} posts"
+        )
 
     normalized_posts = [
         {

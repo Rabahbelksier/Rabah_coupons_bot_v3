@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
 import psycopg2
-from config import DATABASE_URL, ERROR_LOG_RETENTION_DAYS
+from config import CHANNEL_AI_BATCH_SIZE, DATABASE_URL, ERROR_LOG_RETENTION_DAYS
 from core.categories import (
     SAVED_OFFER_CATEGORY_COLUMN_FILTERS,
     category_from_aliexpress_names,
@@ -1082,7 +1082,7 @@ def get_channel_queue_status():
             conn.close()
 
 
-def get_processing_channel_posts(limit=5):
+def get_processing_channel_posts(limit=CHANNEL_AI_BATCH_SIZE):
     """Return rows already claimed for one resumable AI batch."""
     if not DATABASE_URL:
         return []

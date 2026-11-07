@@ -85,7 +85,7 @@ AI_USER_REQUEST_TIMEOUT_SECONDS = _optional_positive_int(
     'AI_USER_REQUEST_TIMEOUT_SECONDS',
     15,
 )
-CHANNEL_AI_BATCH_SIZE = 5
+CHANNEL_AI_BATCH_SIZE = 4
 # Keep enough room for one maximally-sized channel post while leaving a large
 # safety margin below the smallest configured provider context window.
 CHANNEL_AI_MAX_PROMPT_CHARS = min(

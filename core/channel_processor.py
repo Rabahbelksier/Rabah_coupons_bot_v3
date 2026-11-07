@@ -24,7 +24,7 @@ from core.db import (
     refresh_ai_keyword_cache_from_title,
     update_channel_post,
 )
-from config import CHANNEL_TELEGRAM_REPLACEMENT_LINK
+from config import CHANNEL_AI_BATCH_SIZE, CHANNEL_TELEGRAM_REPLACEMENT_LINK
 from services.ai_priority import ai_request_priority
 from utils.parser import extract_aliexpress_urls, extract_product_id
 from utils.observability import observed
@@ -718,10 +718,12 @@ async def _apply_channel_analysis(candidate, analysis):
 
 @observed("channel.batch", new_trace=True)
 async def process_channel_messages(candidates):
-    """Analyze and persist exactly five prepared channel posts as one batch."""
+    """Analyze and persist one full configured batch of prepared channel posts."""
     candidates = list(candidates or [])
-    if len(candidates) != 5:
-        raise ValueError("Channel AI batches must contain exactly five posts")
+    if len(candidates) != CHANNEL_AI_BATCH_SIZE:
+        raise ValueError(
+            f"Channel AI batches must contain exactly {CHANNEL_AI_BATCH_SIZE} posts"
+        )
 
     analysis_started_at = time.perf_counter()
     logger.info("Channel AI analysis task started count=%d", len(candidates))

@@ -1,4 +1,5 @@
 import unittest
+from config import CHANNEL_AI_BATCH_SIZE
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -719,8 +720,12 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
             update_post.call_args.kwargs["content"],
         )
 
-    async def test_processes_five_channel_posts_from_one_ai_batch(self):
-        candidates = [self._batch_candidate(post_id) for post_id in range(1, 6)]
+    async def test_processes_four_channel_posts_from_one_ai_batch(self):
+        self.assertEqual(CHANNEL_AI_BATCH_SIZE, 4)
+        candidates = [
+            self._batch_candidate(post_id)
+            for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)
+        ]
         analyses = [
             ChannelAnalysis(
                 {
@@ -734,7 +739,7 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
                 },
                 ai_provider="Gemini",
             )
-            for post_id in range(1, 6)
+            for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)
         ]
         with (
             patch(
@@ -744,7 +749,7 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "core.channel_processor._generate_affiliate_replacements",
                 new=AsyncMock(return_value={}),
-            ),
+            ) as generate_links,
             patch("core.channel_processor.extract_product_id", return_value="123"),
             patch(
                 "core.channel_processor.get_product_category_from_api",
@@ -754,13 +759,18 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await process_channel_messages(candidates)
 
-        self.assertEqual(result, [1, 2, 3, 4, 5])
+        self.assertEqual(result, [1, 2, 3, 4])
         analyze_batch.assert_called_once()
         self.assertEqual(
             [item["post_id"] for item in analyze_batch.call_args.args[0]],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4],
         )
-        self.assertEqual(update_post.call_count, 5)
+        self.assertEqual(update_post.call_count, CHANNEL_AI_BATCH_SIZE)
+        self.assertEqual(generate_links.await_count, CHANNEL_AI_BATCH_SIZE)
+        self.assertEqual(
+            [call.args[0] for call in generate_links.await_args_list],
+            [candidate["urls"] for candidate in candidates],
+        )
         self.assertTrue(
             all(
                 call.kwargs["processing_status"] == "processed"
@@ -774,8 +784,30 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_rejects_wrong_batch_size_before_ai_links_or_database_changes(self):
+        with (
+            patch("core.channel_processor.analyze_channel_posts") as analyze,
+            patch(
+                "core.channel_processor._generate_affiliate_replacements",
+                new=AsyncMock(),
+            ) as generate_links,
+            patch("core.channel_processor.update_channel_post") as update_post,
+            patch("core.channel_processor.mark_channel_post_pending") as mark_pending,
+        ):
+            for count in (0, 3, 5):
+                with self.subTest(count=count):
+                    with self.assertRaises(ValueError):
+                        await process_channel_messages([
+                            self._batch_candidate(post_id)
+                            for post_id in range(1, count + 1)
+                        ])
+            analyze.assert_not_called()
+            generate_links.assert_not_awaited()
+            update_post.assert_not_called()
+            mark_pending.assert_not_called()
+
     async def test_batch_ai_failure_keeps_every_post_pending(self):
-        candidates = [self._batch_candidate(post_id) for post_id in range(1, 6)]
+        candidates = [self._batch_candidate(post_id) for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         with (
             patch(
                 "core.channel_processor.analyze_channel_posts",
@@ -790,10 +822,10 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [])
         self.assertTrue(result.retryable_failure)
-        self.assertEqual(mark_pending.call_count, 5)
+        self.assertEqual(mark_pending.call_count, CHANNEL_AI_BATCH_SIZE)
 
     async def test_every_processing_failure_returns_to_pending(self):
-        candidates = [self._batch_candidate(post_id) for post_id in range(1, 6)]
+        candidates = [self._batch_candidate(post_id) for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         with (
             patch(
                 "core.channel_processor.analyze_channel_posts",
@@ -810,13 +842,13 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.retryable_failure)
         self.assertEqual(
             [call.args[0] for call in mark_pending.call_args_list],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4],
         )
 
     async def test_requeues_unmatched_item_and_processes_valid_posts(self):
         candidates = [
             self._batch_candidate(post_id)
-            for post_id in range(1, 6)
+            for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)
         ]
         analyses = [
             ChannelAnalysis(
@@ -831,9 +863,9 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
                 },
                 ai_provider="Groq",
             )
-            for post_id in (1, 2, 4, 5)
+            for post_id in (1, 2, 4)
         ]
-        for post_id, analysis in zip((1, 2, 4, 5), analyses):
+        for post_id, analysis in zip((1, 2, 4), analyses):
             analysis.channel_post_id = post_id
         with (
             patch(
@@ -857,7 +889,7 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await process_channel_messages(candidates)
 
-        self.assertEqual(result, [1, 2, 4, 5])
+        self.assertEqual(result, [1, 2, 4])
         analyze_batch.assert_called_once()
         statuses_by_post = {
             call.args[0]: call.kwargs["processing_status"]
@@ -866,15 +898,15 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 post_id: statuses_by_post[post_id]
-                for post_id in (1, 2, 4, 5)
+                for post_id in (1, 2, 4)
             },
-            {post_id: "processed" for post_id in (1, 2, 4, 5)},
+            {post_id: "processed" for post_id in (1, 2, 4)},
         )
         mark_pending.assert_called_once_with(3)
         self.assertTrue(result.retryable_failure)
 
     async def test_unusable_batch_response_requeues_without_singleton_fallback(self):
-        candidates = [self._batch_candidate(post_id) for post_id in range(1, 6)]
+        candidates = [self._batch_candidate(post_id) for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         with (
             patch(
                 "core.channel_processor.analyze_channel_posts",
@@ -889,7 +921,7 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [])
         self.assertTrue(result.retryable_failure)
-        self.assertEqual(mark_pending.call_count, 5)
+        self.assertEqual(mark_pending.call_count, CHANNEL_AI_BATCH_SIZE)
 
     @patch("core.channel_processor.update_channel_post")
     @patch("core.channel_processor.create_channel_post")
@@ -1220,7 +1252,7 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
         create_post.assert_not_called()
 
     async def test_quota_recovery_keeps_channel_post_pending(self):
-        candidates = [self._batch_candidate(post_id) for post_id in range(1, 6)]
+        candidates = [self._batch_candidate(post_id) for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         with (
             patch(
                 "core.channel_processor.analyze_channel_posts",
@@ -1235,10 +1267,10 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [])
         self.assertTrue(result.retryable_failure)
-        self.assertEqual(mark_pending.call_count, 5)
+        self.assertEqual(mark_pending.call_count, CHANNEL_AI_BATCH_SIZE)
 
     async def test_malformed_ai_response_keeps_channel_post_pending(self):
-        candidates = [self._batch_candidate(post_id) for post_id in range(1, 6)]
+        candidates = [self._batch_candidate(post_id) for post_id in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         with (
             patch(
                 "core.channel_processor.analyze_channel_posts",
@@ -1253,7 +1285,7 @@ class ChannelProcessorAffiliateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [])
         self.assertTrue(result.retryable_failure)
-        self.assertEqual(mark_pending.call_count, 5)
+        self.assertEqual(mark_pending.call_count, CHANNEL_AI_BATCH_SIZE)
 
 if __name__ == "__main__":
     unittest.main()

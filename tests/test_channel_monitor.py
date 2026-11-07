@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from telethon.tl.types import PeerChannel
 
@@ -10,6 +10,23 @@ from core import db
 from core.channel_processor import ChannelProcessResult
 from config import CHANNEL_AI_BATCH_SIZE
 from services.channel_monitor import ChannelMonitor, _channel_reference
+
+
+class ChannelBatchDatabaseTests(unittest.TestCase):
+    def test_default_processing_query_claims_only_four_rows(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.description = [("id",)]
+        cursor.fetchall.return_value = [(1,), (2,), (3,), (4,)]
+        with (
+            patch.object(db, "DATABASE_URL", "offline-test"),
+            patch.object(db, "get_db_connection", return_value=connection),
+        ):
+            rows = db.get_processing_channel_posts()
+        self.assertEqual(CHANNEL_AI_BATCH_SIZE, 4)
+        self.assertEqual(cursor.execute.call_args.args[1], (4,))
+        self.assertEqual([row["id"] for row in rows], [1, 2, 3, 4])
+        connection.close.assert_called_once()
 
 
 class FakeTelegramClient:
@@ -453,7 +470,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_analyzes_only_a_full_processing_batch(self):
         monitor = ChannelMonitor()
-        rows = [self._processing_row(index) for index in range(1, 5)]
+        rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE)]
         with (
             patch(
                 "services.channel_monitor.get_processing_channel_posts",
@@ -476,7 +493,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_analyzes_stale_partial_processing_batch(self):
         monitor = ChannelMonitor()
-        rows = [self._processing_row(index) for index in range(1, 5)]
+        rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE)]
         started_at = datetime.now(timezone.utc) - timedelta(hours=1, seconds=1)
         for row in rows:
             row["processing_started_at"] = started_at
@@ -501,7 +518,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(submitted)
         analyze.assert_awaited_once()
-        self.assertEqual(len(analyze.await_args.args[0]), 4)
+        self.assertEqual(len(analyze.await_args.args[0]), CHANNEL_AI_BATCH_SIZE - 1)
         self.assertEqual(prepare.await_args.args, (CHANNEL_AI_BATCH_SIZE * 2,))
 
     async def test_retry_method_returns_pipeline_result(self):
@@ -523,7 +540,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
                 "services.channel_monitor.get_processing_channel_posts",
                 return_value=[
                     self._processing_row(index)
-                    for index in range(1, 6)
+                    for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)
                 ],
             ),
             patch(
@@ -554,7 +571,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_defers_processing_when_all_external_ai_quotas_are_exhausted(self):
         monitor = ChannelMonitor()
-        rows = [self._processing_row(index) for index in range(1, 6)]
+        rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         with (
             patch(
                 "services.channel_monitor.get_ai_service_status",
@@ -569,7 +586,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
             ) as load_processing,
             patch(
                 "services.channel_monitor.requeue_processing_channel_posts",
-                return_value=5,
+                return_value=CHANNEL_AI_BATCH_SIZE,
             ) as requeue_processing,
             patch(
                 "services.channel_monitor.process_channel_messages",
@@ -579,24 +596,24 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
             submitted = await monitor._drain_pending_posts()
 
         self.assertFalse(submitted)
-        load_processing.assert_called_once_with(10)
-        requeue_processing.assert_called_once_with([1, 2, 3, 4, 5])
+        load_processing.assert_called_once_with(CHANNEL_AI_BATCH_SIZE * 2)
+        requeue_processing.assert_called_once_with([1, 2, 3, 4])
         analyze.assert_not_awaited()
 
-    async def test_prepares_next_five_while_current_five_are_analyzed(self):
+    async def test_prepares_next_four_while_current_four_are_analyzed(self):
         monitor = ChannelMonitor()
-        rows = [self._processing_row(index) for index in range(1, 6)]
+        rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         analysis_started = asyncio.Event()
         next_wave_finished = asyncio.Event()
 
         async def analyze(candidates):
-            self.assertEqual(len(candidates), 5)
+            self.assertEqual(len(candidates), CHANNEL_AI_BATCH_SIZE)
             analysis_started.set()
             await asyncio.wait_for(next_wave_finished.wait(), timeout=1)
             return ChannelProcessResult([item["post_id"] for item in candidates])
 
         async def prepare_capacity(target_count):
-            self.assertEqual(target_count, 10)
+            self.assertEqual(target_count, CHANNEL_AI_BATCH_SIZE * 2)
             await asyncio.wait_for(analysis_started.wait(), timeout=1)
             next_wave_finished.set()
             return True
@@ -620,11 +637,11 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(submitted)
         analyze_batch.assert_awaited_once()
-        prepare.assert_awaited_once_with(10)
+        prepare.assert_awaited_once_with(CHANNEL_AI_BATCH_SIZE * 2)
 
     async def test_preparation_failure_waits_for_analysis_before_unlocking(self):
         monitor = ChannelMonitor()
-        rows = [self._processing_row(index) for index in range(1, 6)]
+        rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         analysis_finished = asyncio.Event()
 
         async def analyze(candidates):
@@ -657,7 +674,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancellation_waits_for_analysis_before_unlocking(self):
         monitor = ChannelMonitor()
-        rows = [self._processing_row(index) for index in range(1, 6)]
+        rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         analysis_started = asyncio.Event()
         allow_analysis_finish = asyncio.Event()
         released = asyncio.Event()
@@ -779,15 +796,15 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
         drain.assert_awaited_once_with()
         event.get_chat.assert_not_awaited()
 
-    async def test_fifth_registered_post_starts_ai_before_next_capacity_finishes(self):
+    async def test_fourth_registered_post_starts_ai_before_next_capacity_finishes(self):
         monitor = ChannelMonitor()
-        first_rows = [self._processing_row(index) for index in range(1, 5)]
-        full_rows = [self._processing_row(index) for index in range(1, 6)]
+        first_rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE)]
+        full_rows = [self._processing_row(index) for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)]
         analysis_started = asyncio.Event()
         next_capacity_finished = asyncio.Event()
 
         async def analyze(candidates):
-            self.assertEqual(len(candidates), 5)
+            self.assertEqual(len(candidates), CHANNEL_AI_BATCH_SIZE)
             analysis_started.set()
             await asyncio.wait_for(next_capacity_finished.wait(), timeout=1)
             return ChannelProcessResult([item["post_id"] for item in candidates])
@@ -801,7 +818,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         event = SimpleNamespace(
-            message=SimpleNamespace(id=5),
+            message=SimpleNamespace(id=CHANNEL_AI_BATCH_SIZE),
             chat_id=-100123,
             chat=SimpleNamespace(username="offers"),
             get_chat=AsyncMock(),
@@ -809,7 +826,7 @@ class ChannelMonitorPipelineTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch(
                 "services.channel_monitor.register_channel_message",
-                new=AsyncMock(return_value={"post_id": 5}),
+                new=AsyncMock(return_value={"post_id": CHANNEL_AI_BATCH_SIZE}),
             ) as register,
             patch(
                 "services.channel_monitor.get_processing_channel_posts",
@@ -875,7 +892,7 @@ class ChannelProcessingLockPostgresTests(unittest.IsolatedAsyncioTestCase):
                 "photo_file_id": None,
                 "processing_status": "processing",
             }
-            for index in range(1, 6)
+            for index in range(1, CHANNEL_AI_BATCH_SIZE + 1)
         ]
 
     async def _assert_lock_can_be_reacquired(self):
