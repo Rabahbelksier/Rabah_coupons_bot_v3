@@ -65,6 +65,30 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - **Database**: PostgreSQL via psycopg2 for user storage
 - **Deployment**: Render.com with gunicorn
 
+## Production diagnostics
+- The user-confirmed production host is Railway, deployed from GitHub; older
+  Render references above describe historical configuration.
+- Console and persisted error logs include UTC timestamps, severity, source
+  file/line/function, process/thread, operation, and a correlation `trace`.
+  Telegram update IDs and product IDs are attached where available.
+- Search Railway logs for the same `trace` to follow HTTP intake, Telegram
+  processing, queued product work, and inherited worker-thread diagnostics.
+  Completion of update processing is not a guarantee that Telegram delivered
+  a message: callback errors are reported independently.
+- `BOT_LOG_LEVEL` defaults to `INFO`; temporarily set it to `DEBUG` for routine
+  operation timings and non-critical cleanup/cache fallback details. Normal
+  error tracebacks do not require DEBUG. HTTPX remains at WARNING.
+- Warning/error calls made inside exception handlers include the active
+  traceback. Expected parsing failures and normal cancellation are not promoted
+  to operational errors. Database reports still store ERROR and above only.
+- Formatting redacts credential fields, known provider/Telegram token shapes,
+  database URLs/details, and HTTP URL query strings. New diagnostics must not
+  log message bodies, prompts, request headers, cookies, or raw webhook paths;
+  arbitrary unlabeled sensitive text cannot be reliably sanitized by patterns.
+- Do not start the local bot or import the main entry point merely to test
+  diagnostics: doing so can replace Railway's Telegram webhook. Use offline
+  unit tests and isolated Flask apps instead.
+
 ## Flow
 1. User sends AliExpress URL → `handlers/messages.py` → `services/queue_manager.py`
 2. Queue worker calls `services/worker.py` → `process_link_for_user`

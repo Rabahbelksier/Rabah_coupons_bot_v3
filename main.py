@@ -3,6 +3,18 @@ import atexit
 import logging
 import asyncio
 import threading
+
+from utils.observability import (
+    configure_logging,
+    install_http_logging,
+    process_telegram_update,
+    telegram_error_handler,
+)
+
+# Install before configuration/application imports, so startup failures and
+# existing library handlers use the same safe diagnostics.
+configure_logging()
+
 import requests
 from flask import Flask, request, Response, jsonify
 from telegram import BotCommand, Update
@@ -62,14 +74,13 @@ from services.cart_price_updater import cart_price_updater
 from services.telegram_runtime import TelegramRuntime
 from utils.error_logging import install_error_log_handler
 
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 _gemini_phrase_cache_startup_lock = threading.Lock()
 _gemini_phrase_cache_startup_scheduled = False
 
 app = Flask(__name__)
 app.register_blueprint(meta_landing)
+install_http_logging(app)
 
 SCRAPE_API_KEY = os.getenv('SCRAPE_API_KEY', '')
 
@@ -164,6 +175,7 @@ def _build_telegram_app(is_recovery=False):
     application.add_handler(
         CallbackQueryHandler(ai_previous_callback, pattern="^ai_previous$")
     )
+    application.add_error_handler(telegram_error_handler)
     return application
 
 channel_monitor = ChannelMonitor()
@@ -305,7 +317,7 @@ def webhook():
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, application.bot)
         _runtime.submit(
-            application.process_update(update),
+            process_telegram_update(application, update),
             "Telegram update processing",
         )
         return Response(status=200)

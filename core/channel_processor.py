@@ -27,6 +27,7 @@ from core.db import (
 from config import CHANNEL_TELEGRAM_REPLACEMENT_LINK
 from services.ai_priority import ai_request_priority
 from utils.parser import extract_aliexpress_urls, extract_product_id
+from utils.log_context import traced_operation
 
 logger = logging.getLogger(__name__)
 
@@ -488,6 +489,7 @@ def _build_bundle_channel_content(text, analysis, urls, replacements):
     return "\n\n".join(blocks)
 
 
+@traced_operation("channel.prepare")
 async def prepare_channel_message(
     message,
     channel_id,
@@ -715,6 +717,7 @@ async def _apply_channel_analysis(candidate, analysis):
         return None
 
 
+@traced_operation("channel.analyze_batch", new_trace=True)
 async def process_channel_messages(candidates):
     """Analyze and persist exactly five prepared channel posts as one batch."""
     candidates = list(candidates or [])

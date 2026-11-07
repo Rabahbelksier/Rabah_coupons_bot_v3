@@ -28,6 +28,7 @@ from handlers.ai_search import (
     _should_cache_resolved_photo,
 )
 from utils.telegram import telegram_chat_id as _target_chat_id
+from utils.log_context import traced_operation
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ class AutoPublisher:
             except asyncio.TimeoutError:
                 continue
 
+    @traced_operation("publisher.cycle", new_trace=True)
     async def run_once(self):
         if not self._application or not AUTO_PUBLISH_CHANNEL_LINK:
             return

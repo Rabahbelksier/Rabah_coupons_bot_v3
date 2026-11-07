@@ -1,5 +1,6 @@
 import json
 import logging
+from utils.log_context import traced_operation
 import re
 import threading
 import time
@@ -1032,6 +1033,7 @@ class AIService:
             for provider in self._providers
         }
 
+    @traced_operation("ai.generate")
     def generate_json(self, prompt, request_kind="user", provider_name=None):
         if provider_name and not any(
             provider.name == provider_name for provider in self._providers
@@ -1048,9 +1050,10 @@ class AIService:
             return result
         finally:
             logger.info(
-                "AI request completed kind=%s provider=%s duration_ms=%.1f",
+                "AI request finished kind=%s provider=%s outcome=%s duration_ms=%.1f",
                 request_kind,
                 getattr(result, "provider", None),
+                "returned_result" if result is not None else "no_result",
                 (time.perf_counter() - started_at) * 1000,
             )
 

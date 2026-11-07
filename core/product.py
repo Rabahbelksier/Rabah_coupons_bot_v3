@@ -64,6 +64,7 @@ def parse_product_data(product_data):
             'commission_rate': p.get('commission_rate', 'غير محدد')
         }
     except Exception:
+        logger.warning("Could not parse AliExpress product data", exc_info=True)
         return {}
 
 

@@ -3573,6 +3573,10 @@ def add_error_log(level, logger_name, message):
     except Exception:
         if conn:
             conn.rollback()
+        logger.warning(
+            "Error log database write failed; original error remains in console",
+            exc_info=True,
+        )
     finally:
         if conn:
             conn.close()

@@ -2,6 +2,9 @@
 
 import asyncio
 import threading
+from contextvars import copy_context
+
+from utils.observability import log_asyncio_exception
 
 
 class TelegramRuntime:
@@ -109,6 +112,7 @@ class TelegramRuntime:
 
             self._stop_event.clear()
             loop = asyncio.new_event_loop()
+            loop.set_exception_handler(log_asyncio_exception)
             thread = threading.Thread(
                 target=self._run_loop,
                 args=(loop,),
@@ -186,8 +190,11 @@ class TelegramRuntime:
         except Exception:
             coroutine.close()
             raise
+        diagnostic_context = copy_context()
         future.add_done_callback(
-            lambda completed: self._log_future_result(completed, operation)
+            lambda completed: diagnostic_context.run(
+                self._log_future_result, completed, operation
+            )
         )
         return future
 

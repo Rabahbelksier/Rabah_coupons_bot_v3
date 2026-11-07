@@ -21,3 +21,4 @@
 - [Automatic publisher limits](automatic-publisher-limits.md) — publish at 5-item thresholds, choose newest regardless of price, and cap each selected offer at two sends per day.
 - [Meta Telegram attribution](meta-telegram-attribution.md) — send TelegramBotStart only for the configured campaign code when the user's stored source changes.
 - [Production hosting](production-hosting.md) — production runs on Railway from GitHub; preserve build/start configuration until its actual use is confirmed.
+- [Logging safety](logging-safety.md) — preserve bot messages and behavior; never log raw payloads; completed Telegram processing does not prove successful delivery.

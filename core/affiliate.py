@@ -3,11 +3,13 @@ import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from contextvars import copy_context
 
 from config import APP_KEY, APP_SECRET, TRACKING_ID, API_URL
 from core.api import generate_api_signature
 from core.cache import cache, cache_lock
 from utils.http import _http_session
+from utils.log_context import traced_operation
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +87,14 @@ def _generate_one_offer(index, name, primary_url, secondary_url):
     return index, f"{name}:\n❌ فشل التوليد من المصدر"
 
 
+@traced_operation("affiliate.generate_links")
 def generate_affiliate_links(product_id):
     cache_key = f"links_{product_id}"
 
     try:
         cached = cache.get(cache_key)
     except Exception:
+        logger.debug("Affiliate cache read failed; using API", exc_info=True)
         cached = None
     if cached is not None:
         return cached
@@ -144,7 +148,14 @@ def generate_affiliate_links(product_id):
     for batch_start in range(0, len(offers), batch_size):
         batch = offers[batch_start:batch_start + batch_size]
         futures = {
-            _link_executor.submit(_generate_one_offer, batch_start + j, name, primary, secondary): batch_start + j
+            _link_executor.submit(
+                copy_context().run,
+                _generate_one_offer,
+                batch_start + j,
+                name,
+                primary,
+                secondary,
+            ): batch_start + j
             for j, (name, primary, secondary) in enumerate(batch)
         }
         for future in as_completed(futures):

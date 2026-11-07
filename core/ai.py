@@ -2835,6 +2835,11 @@ def _analyze_channel_post_chunk(posts, request_kind="channel"):
             analysis.channel_post_id = post["post_id"]
             analyses.append(analysis)
         except Exception:
+            logger.warning(
+                "Could not map channel AI analysis to a post post_id=%s",
+                post.get("post_id"),
+                exc_info=True,
+            )
             failed_post_ids.append(post["post_id"])
     return ChannelBatchAnalysis(analyses, failed_post_ids=failed_post_ids)
 

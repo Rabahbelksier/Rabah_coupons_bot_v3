@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from utils.log_context import traced_operation
 import time
 
 import requests
@@ -69,6 +70,7 @@ def _send_telegram_start_event(event):
         raise RuntimeError("Meta rejected the TelegramBotStart event")
 
 
+@traced_operation("meta.outbox")
 def send_pending_telegram_start_events(events):
     for event in events:
         try:

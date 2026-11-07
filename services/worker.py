@@ -10,6 +10,7 @@ from core.db import is_feature_enabled
 from core.scraper import get_product_details_scraping
 from utils.app_promotion import app_promotion_button
 from handlers.ai_search import ai_search_reply_keyboard, ask_ai_button
+from utils.log_context import traced_operation, update_log_context
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ async def _delete_reply_keyboard_anchor(bot, chat_id, anchor_message):
         return False
 
 
+@traced_operation("product.process")
 async def process_link_for_user(
     chat_id: int,
     url: str,
@@ -78,6 +80,8 @@ async def process_link_for_user(
         )
         return False
 
+    update_log_context(product_id=product_id)
+    logger.info("Product processing started product_id=%s", product_id)
     loading_msg = await bot.send_message(
         chat_id=chat_id,
         text="⏳ جاري البحث عن العروض",
@@ -187,6 +191,6 @@ async def process_link_for_user(
                     message_id=loading_msg.message_id,
                 )
         except Exception:
-            pass
+            logger.debug("Could not delete product loading message", exc_info=True)
 
     return anchor_removed

@@ -1,6 +1,7 @@
 """Background refresh of current USD prices for the Smart Cart products."""
 
 import logging
+from utils.log_context import traced_operation
 import threading
 
 from core.db import (
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 CART_PRICE_REFRESH_INTERVAL_SECONDS = 5 * 60 * 60
 
 
+@traced_operation("cart.price_refresh", new_trace=True)
 def refresh_cart_prices():
     """Refresh every cart product price with one AliExpress API request."""
     rows = get_cart_price_refresh_rows()

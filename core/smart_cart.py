@@ -437,6 +437,10 @@ async def start_smart_cart(update, context, product_id):
     try:
         current_price = await asyncio.to_thread(fetch_current_price, product_id)
     except Exception:
+        logger.warning(
+            "Smart cart current-price lookup failed; keeping existing fallback",
+            exc_info=True,
+        )
         current_price = None
     message_text = query.message.caption or query.message.text or ""
     context.user_data["smart_cart"] = {
