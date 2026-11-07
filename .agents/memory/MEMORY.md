@@ -20,3 +20,4 @@
 - [Channel shipping-country rule](channel-shipping-country.md) — any explicitly named country in a product post qualifies as a destination, even outside shipping wording.
 - [Automatic publisher limits](automatic-publisher-limits.md) — publish at 5-item thresholds, choose newest regardless of price, and cap each selected offer at two sends per day.
 - [Logging boundaries](logging-scope.md) — Railway diagnostics must preserve all bot logic and user-visible messages, including admin reports.
+- [Meta attribution design](meta-attribution-design.md) — approved per-visit start tokens with a fixed campaign source; direct source links remain supported.
