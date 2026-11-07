@@ -59,8 +59,9 @@ from services.auto_publisher import AutoPublisher
 from services.cart_price_updater import cart_price_updater
 from services.telegram_runtime import TelegramRuntime
 from utils.error_logging import install_error_log_handler
+from utils.observability import configure_console_logging, observed
 
-logging.basicConfig(level=logging.INFO)
+configure_console_logging()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 _gemini_phrase_cache_startup_lock = threading.Lock()
@@ -286,6 +287,7 @@ def index():
 
 
 @app.route(f'/{TOKEN}', methods=['POST'])
+@observed("telegram.webhook", new_trace=True)
 def webhook():
     try:
         loop = _ensure_ready()

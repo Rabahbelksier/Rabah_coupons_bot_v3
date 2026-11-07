@@ -15,6 +15,7 @@ from core.db import get_db_connection, is_feature_enabled
 from core.product_prices import fetch_current_price
 from services.queue_manager import enqueue_url
 from utils.parser import extract_aliexpress_url
+from utils.observability import observed
 
 logger = logging.getLogger(__name__)
 
@@ -626,6 +627,7 @@ def _calculate_smart_cart_offers(state, main_after_discount):
     return offers
 
 
+@observed("smart_cart.calculate")
 async def _build_smart_cart_offer(update, context):
     state = context.user_data["smart_cart"]
     loading = await update.message.reply_text("⏳ جاري تجهيز العرض AI")

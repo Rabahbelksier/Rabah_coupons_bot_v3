@@ -16,10 +16,12 @@ from handlers.ai_search import (
 )
 from handlers.help import MORE_DETAILS_BUTTON_TEXT, send_help_menu
 from utils.parser import extract_aliexpress_url
+from utils.observability import observed
 
 logger = logging.getLogger(__name__)
 
 
+@observed("telegram.message")
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await handle_admin_message(update, context):
         return

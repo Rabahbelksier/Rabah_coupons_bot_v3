@@ -40,6 +40,7 @@ from core.product import get_product_info_from_api
 from core.scraper import get_product_details_scraping
 from utils.parser import extract_aliexpress_url, extract_product_id
 from services.ai_priority import ai_request_priority
+from utils.observability import observed
 
 logger = logging.getLogger(__name__)
 
@@ -966,6 +967,7 @@ async def handle_saved_offers_reply_message(update, context):
     return True
 
 
+@observed("offers.search")
 async def handle_ai_search_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,

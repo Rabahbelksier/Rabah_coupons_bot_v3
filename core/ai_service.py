@@ -8,6 +8,7 @@ from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import requests
+from utils.observability import observed
 
 from config import (
     AI_RECOVERY_INTERVAL_SECONDS,
@@ -1032,6 +1033,7 @@ class AIService:
             for provider in self._providers
         }
 
+    @observed("ai.generate")
     def generate_json(self, prompt, request_kind="user", provider_name=None):
         if provider_name and not any(
             provider.name == provider_name for provider in self._providers

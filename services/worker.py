@@ -10,6 +10,7 @@ from core.db import is_feature_enabled
 from core.scraper import get_product_details_scraping
 from utils.app_promotion import app_promotion_button
 from handlers.ai_search import ai_search_reply_keyboard, ask_ai_button
+from utils.observability import observed
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ async def _delete_reply_keyboard_anchor(bot, chat_id, anchor_message):
         return False
 
 
+@observed("product.offer", new_trace=True)
 async def process_link_for_user(
     chat_id: int,
     url: str,
