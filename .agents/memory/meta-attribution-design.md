@@ -21,8 +21,8 @@ Basic bot-user registration must remain independent of optional Meta persistence
 
 **How to apply:** Link browser data only through the exact visit token, never by guessing from IP or timing. Compare the resolved or direct source with configuration and check the previously saved value before updating it; suppress a conversion if the campaign source was already saved, and retain durable event deduplication. Plain starts without a source must not erase it. Do not change existing bot posts or messages as part of this work.
 
-Meta API acceptance and visibility in the Test Events interface are separate checks. An accepted chat-source diagnostic did not appear for the user; after a paired chat/website diagnostic, the user reported seeing TelegramBotStart in the website view, without identifying which diagnostic event ID appeared.
+Meta API acceptance and visibility in the Test Events interface are separate checks. An accepted chat-source diagnostic did not appear for the user; in a paired chat/website diagnostic, the user confirmed that the displayed TelegramBotStart event ID belonged to the website-source diagnostic.
 
 **Why:** Successful API responses alone led to an incomplete explanation of the user's missing test event.
 
-**How to apply:** Verify the displayed event ID before attributing visibility to an action-source change. Keep the source accurate to where the actual conversion occurs; do not relabel a Telegram interaction as a website interaction merely to make it visible in a website test view.
+**How to apply:** Source classification affects this project's test-view visibility; do not assume API acceptance guarantees appearance in the website view. Keep the source accurate to where the actual conversion occurs; do not relabel a Telegram interaction as a website interaction merely to make it visible in a website test view.
