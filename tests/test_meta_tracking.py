@@ -68,8 +68,12 @@ class MetaRedirectTests(unittest.TestCase):
         self.assertNotIn("TelegramBotStart", html)
         self.assertNotIn(SETTINGS.token, html)
         self.assertIn(
-            'const target = "https://t.me/rabahcoupons1bot?start=campaign_test";',
+            'window.location.replace("https://t.me/rabahcoupons1bot?start=campaign_test");',
             html,
+        )
+        self.assertNotIn("const target", html)
+        self.assertRegex(
+            html, r"<script>\s*window\.setTimeout\(function \(\) \{",
         )
         self.assertNotIn("?start=mv_", html)
         self.assertNotIn("sendBeacon", html)
@@ -104,7 +108,8 @@ class MetaRedirectTests(unittest.TestCase):
             self.settings.return_value = current
             html = self.client.get("/bot").get_data(as_text=True)
             self.assertIn(
-                f'const target = "{tracking.BOT_URL}?start={current.source}";', html,
+                f'window.location.replace("{tracking.BOT_URL}?start={current.source}");',
+                html,
             )
         self.create.assert_not_called()
 
