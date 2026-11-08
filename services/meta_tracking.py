@@ -33,11 +33,17 @@ class Settings:
     proxy_hops: int
 
     @property
+    def source_valid(self):
+        return bool(START_PATTERN.fullmatch(self.source))
+
+    @property
+    def browser_ready(self):
+        return bool(self.enabled and re.fullmatch(r"\d{1,30}", self.pixel))
+
+    @property
     def ready(self):
         return bool(
-            self.enabled and re.fullmatch(r"\d{1,30}", self.pixel)
-            and START_PATTERN.fullmatch(self.source)
-            and not self.source.startswith("mv_")
+            self.browser_ready and self.source_valid
             and self.token
             and re.fullmatch(r"v\d{1,3}\.0", self.version)
             and config.DATABASE_URL
@@ -55,17 +61,17 @@ def settings():
 
 def start_attribution(args, event_time=None):
     current = settings()
-    if not current.ready:
-        return None
     payload = args[0] if isinstance(args, (list, tuple)) and len(args) == 1 else ""
     if not isinstance(payload, str) or not START_PATTERN.fullmatch(payload):
-        payload = ""
+        return None
     return {
         "source": current.source,
         "pixel": current.pixel,
         "start": payload,
         "test_code": current.test_code,
         "event_time": int(event_time if event_time is not None else time.time()),
+        # Capturing a source must not depend on Meta credentials/readiness.
+        "eligible": current.ready,
     }
 
 

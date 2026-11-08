@@ -9,8 +9,8 @@ queues only the browser events `PageView` and custom `TelegramClick`. Here
 Telegram application opened. Browser blockers, fast navigation and network
 failures can prevent browser events from arriving.
 
-Opening Telegram is **not** a subscription event. Only receipt of the user's
-first eligible `/start` queues the custom server event `TelegramBotStart`.
+Opening Telegram is **not** a subscription event. Receipt of an eligible
+campaign `/start` queues the custom server event `TelegramBotStart`.
 Telegram may require the user to press **Start** first.
 
 The redirect page does not change posts, bot replies, existing search, channel
@@ -26,58 +26,55 @@ the application.
 | --- | --- |
 | `META_TRACKING_ENABLED` | Defaults to `false`. Set `true` only after the configuration and privacy requirements below are satisfied. |
 | `META_PIXEL_ID` | Numeric pixel/dataset ID used by both the page and the CAPI sender. |
-| `META_ATTRIBUTION_ID` | Fixed campaign source, 1–64 characters from `A-Z a-z 0-9 _ -`. The prefix `mv_` is reserved for visit tokens and cannot be used here. |
+| `META_ATTRIBUTION_ID` | Fixed campaign source, 1–64 characters from `A-Z a-z 0-9 _ -`. The redirect substitutes this exact value in `start`. |
 | `META_CAPI_ACCESS_TOKEN` | Secret, server-only Conversions API token. Never put it in HTML or a URL. |
 | `META_TEST_EVENT_CODE` | Optional Events Manager test code. Remove for real conversion delivery. |
 | `META_GRAPH_API_VERSION` | Defaults to `v25.0`. Review against Meta's supported Graph API versions when upgrading. |
-| `META_VISIT_TTL_SECONDS` | Visit retention and attribution window, defaults to 86,400 seconds; capped at seven days. |
-| `META_TRUSTED_PROXY_HOPS` | Defaults to `0`, which ignores `X-Forwarded-For`. Set an exact trusted hop count only after confirming the deployment's proxy sanitizes/appends forwarding headers. |
+| `META_VISIT_TTL_SECONDS`, `META_TRUSTED_PROXY_HOPS` | Legacy visit-capture settings. The fixed-source redirect no longer creates visit records or attaches browser data to bot events. |
 
 Existing bot credentials and external PostgreSQL settings remain necessary.
 Startup adds a nullable `meta_source_id` to `user_bot` and the separate tracking
 tables. It does not replace the existing database or rewrite existing users.
 
-If tracking is disabled or required configuration is invalid/missing, `/bot`
-still opens the ordinary bot link, without Pixel calls or attribution.
-If visit persistence fails while configuration is valid, the page falls back
-to the direct campaign source link. This preserves the redirect but cannot
-associate that subscription with the failed browser-visit record.
+When enabled, `/bot` uses the configured source even if CAPI credentials or
+the database are unavailable. Browser events need only the enabled switch and
+valid pixel ID; they do not depend on CAPI readiness. Disabled tracking and
+privacy opt-outs still use the ordinary bot link without Pixel initialization.
 
-## Source and visit tokens
+## Literal source links and saving
 
-The environment source identifies the campaign, not an individual visitor.
-Every tracked `/bot` load gets a random 35-character `mv_…` start token.
-Only its SHA-256 digest is persisted, and it is a single-use bearer capability.
-Do not share a visit's Telegram link between people; a new visitor should open
-`/bot` to receive their own token.
+The redirect is exactly:
 
-The backend stores the source, pixel, expiry and available browser matching
-data against that token. Once a new user starts the bot, a transaction:
+`https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}`
 
-1. Inserts the user only if absent.
-2. Resolves and locks an unexpired, unused visit belonging to the current
-   configured source **and** pixel, or accepts a direct start payload exactly
-   equal to the configured source.
-3. Saves the **fixed source**, not the token, in `user_bot.meta_source_id`.
-4. Queues one conversion with a stable event ID and original Telegram message
-   timestamp. A unique hashed user key also prevents a previously attributed
-   user being counted again if their `user_bot` row was later removed.
-5. Clears browser matching data from the consumed visit.
+For example, configuring `fbads` produces `?start=fbads`, never a random visit
+token. The source identifies a campaign, not an individual browser visit.
 
-An old user, an organic first start, a different source, an expired/used token,
-or a previous campaign's token cannot become a new conversion. A user whose
-first start was organic cannot be reattributed by pressing Start later.
-An existing user's ordinary `/start` behavior and messages stay unchanged.
-If the registration transaction fails, it rolls back completely; it does not
-insert an organic row as a fallback and silently lose the first-use attribution.
-The bot still replies normally, and a later `/start` can retry registration.
+On receipt of a valid `/start SOURCE`, a database transaction:
 
-For a direct campaign link use:
+1. Creates the bot user if absent, or locks the existing user's row.
+2. Reads the previously saved `meta_source_id`, then saves the received source
+   literally, including a source different from `META_ATTRIBUTION_ID`.
+3. Creates a conversion only if the received source matches the configured
+   campaign, tracking/CAPI are ready, and the previous saved value was not
+   already that campaign source.
+4. Uses a unique durable user receipt to prevent a second event, even if the
+   source changes away and back, commands arrive concurrently, or the user row
+   is subsequently removed.
 
-`https://t.me/rabahcoupons1bot?start=YOUR_CONFIGURED_SOURCE`
+Existing users with an empty or different source are eligible under the user's
+clarified rule. A nonmatching source is saved without an event. A later valid
+source replaces the saved value; a plain or invalid `/start` does not erase it.
+Source capture does not depend on Meta being enabled or its token being valid.
+If the matching source was saved while delivery was disabled, repeating it
+after enabling delivery does not retroactively create an event.
 
-It produces only `TelegramBotStart` for an eligible new user, never page/click
-events. Without a visit, no IP, browser or click data is invented.
+Saving the source and queuing its event are atomic. On a database failure they
+roll back together, and the bot still sends its existing reply. A subsequent
+start can retry. No historical users are bulk-updated by this change.
+
+A direct campaign link follows the same registration rules but generates no
+`PageView` or `TelegramClick` because `/bot` was not opened.
 
 ## Matching data and privacy
 
@@ -94,26 +91,17 @@ Pixel initialization or a campaign start payload. Direct Telegram campaign
 links do not carry browser consent state; enabling that campaign requires a
 lawful basis for the bot event itself as well.
 
-Collected matching data is limited to:
+The browser Pixel sends its own page/click matching data, subject to browser
+restrictions and consent. A shared fixed `start` source cannot identify which
+browser visit belongs to which Telegram account. Consequently the bot event
+contains only a SHA-256-hashed, namespaced Telegram ID as `external_id`; it does
+not attach a browser's IP, fbp or fbc by guessing from timing or IP addresses.
+This limits matching quality and does not guarantee Meta can match a person.
+Email, phone and unverified Telegram display names are not invented or sent.
 
-- Valid `_fbp` / `_fbc` browser identifiers when present.
-- `fbc` created only when a real, syntactically valid `fbclid` is received.
-- The request's IP and user agent. Forwarded IP headers are ignored unless
-  trusted proxy hops are explicitly configured. Incorrect hop configuration
-  can record an internal proxy address or trust spoofed addresses.
-- A SHA-256-hashed, namespaced Telegram user ID as `external_id`. This is not
-  sent as a Facebook login ID, and an unlinked Telegram ID by itself does not
-  guarantee Meta can match a person.
-
-The page sends same-origin, best-effort beacons before navigation to capture an
-`_fbp` created by the asynchronous Pixel. If Pixel is blocked or loads too late,
-this field can be absent. Email, telephone, Telegram display names, precise
-location and invented demographic fields are not sent. Telegram display names
-are not verified Facebook names. IP/user agent/fbp/fbc are not hashed; the
-external ID is hashed as required for customer matching.
-
-Unconsumed visits expire according to the configured window and are deleted
-by hourly maintenance. A consumed visit immediately loses its browser data.
+New redirect pages no longer create server-side visit records or send cookie
+enrichment beacons. Legacy visit records are retained only until their existing
+expiry and deleted by hourly maintenance; they are not used for new bot events.
 Delivery payloads are erased upon successful delivery or permanent failure,
 and pending payloads expire after six days (before Meta's seven-day event-age
 limit). Maintenance continues when tracking is disabled, provided the bot
@@ -169,13 +157,15 @@ not Meta's special Messenger/WhatsApp business-messaging API.
    using a real test ad click if `fbclid` matching is being checked. Do not
    fabricate `fbclid`. In the browser, verify `PageView` and `TelegramClick`
    with Meta's browser tools; these browser events do not use the CAPI test code.
-4. Use a genuinely new test Telegram account to press Start. Verify the custom
-   `TelegramBotStart` appears under Test Events, with `action_source=chat`.
-   An existing account is intentionally ineligible. Do not delete real users
-   to manufacture first-use eligibility.
+4. Use a test Telegram account without a previously saved matching source or
+   prior conversion to press Start. An existing account with an empty/different
+   source is eligible. Verify `TelegramBotStart` under Test Events with
+   `action_source=chat`. Do not delete real users or receipts to manufacture
+   eligibility.
 5. Repeat Start, test a direct campaign link with another new test account, and
-   test organic and mismatched links. Confirm conversion counts do not increase
-   for excluded cases. Inspect errors without copying secrets/customer data.
+   test organic and mismatched links. Confirm mismatched sources are saved but
+   do not create events, and repeat matching starts do not create duplicates.
+   Inspect errors without copying secrets/customer data.
 6. Remove the test-event code for future real events and restart. Do not remove
    it hoping already queued test events will turn into production events.
 7. Only after successful verification, replace the advertising destination with

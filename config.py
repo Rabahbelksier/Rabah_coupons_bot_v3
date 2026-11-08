@@ -30,7 +30,7 @@ TOKEN = os.getenv('TELEGRAM_TOKEN')
 # DATABASE_URL is the built-in development database in this workspace.
 DATABASE_URL = os.getenv('EXTERNAL_DATABASE_URL') or os.getenv('DATABASE_URL')
 PORT = int(os.getenv('PORT', 5000))
-META_TRACKING_ENABLED = os.getenv('META_TRACKING_ENABLED', '').lower() in {
+META_TRACKING_ENABLED = os.getenv('META_TRACKING_ENABLED', '').strip().lower() in {
     '1', 'true', 'yes', 'on',
 }
 META_PIXEL_ID = os.getenv('META_PIXEL_ID', '').strip()

@@ -3093,8 +3093,8 @@ def save_user(chat_id, first_name, last_name, *, meta_start=None):
         try:
             return register_start(chat_id, first_name, last_name, meta_start)
         except Exception:
-            # Do not fall back to an unattributed insert: a failed transaction
-            # must not permanently consume the user's first-use eligibility.
+            # Keep source capture and its event atomic. A later /start can
+            # retry after an outage without losing the source or its event.
             logger.warning("User registration with Meta attribution unavailable")
             return False
     try:

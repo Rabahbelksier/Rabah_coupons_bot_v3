@@ -47,7 +47,7 @@ class MetaRedirectTests(unittest.TestCase):
         self.settings, self.create, self.enrich, _ = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in self.patches])
 
-    def test_redirect_records_visit_and_only_two_browser_events(self):
+    def test_redirect_uses_exact_configured_source_and_only_two_browser_events(self):
         response = self.client.get(
             "/bot?fbclid=real_click", headers={"User-Agent": "test-browser"},
         )
@@ -60,18 +60,16 @@ class MetaRedirectTests(unittest.TestCase):
         self.assertIn("fbq('trackCustom', 'TelegramClick')", html)
         self.assertNotIn("TelegramBotStart", html)
         self.assertNotIn(SETTINGS.token, html)
-        token, source, pixel, data, ttl = self.create.call_args.args
-        self.assertRegex(token, r"^mv_[A-Za-z0-9_-]{32}$")
-        self.assertLessEqual(len(token), 64)
-        self.assertIn("?start=" + token, html)
-        self.assertEqual((source, pixel, ttl), ("campaign_test", SETTINGS.pixel, 86400))
-        self.assertTrue(data["fbc"].endswith(".real_click"))
-        self.assertEqual(data["client_user_agent"], "test-browser")
+        self.assertIn(
+            'const target = "https://t.me/rabahcoupons1bot?start=campaign_test";', html,
+        )
+        self.assertNotIn("?start=mv_", html)
+        self.assertNotIn("sendBeacon", html)
+        self.create.assert_not_called()
 
-    def test_disabled_incomplete_and_privacy_optout_are_organic(self):
+    def test_disabled_and_privacy_optout_are_organic(self):
         for current, headers in [
             (replace(SETTINGS, enabled=False), {}),
-            (replace(SETTINGS, pixel=""), {}),
             (SETTINGS, {"Sec-GPC": "1"}),
             (SETTINGS, {"DNT": "1"}),
         ]:
@@ -87,6 +85,20 @@ class MetaRedirectTests(unittest.TestCase):
         html = self.client.get("/bot").get_data(as_text=True)
         self.assertIn("?start=campaign_test", html)
         self.assertNotIn("sensitive storage details", html)
+        self.create.assert_not_called()
+
+    def test_redirect_source_does_not_depend_on_capi_token_or_pixel(self):
+        for current in [
+            replace(SETTINGS, token=""),
+            replace(SETTINGS, pixel=""),
+            replace(SETTINGS, source="another_source"),
+        ]:
+            self.settings.return_value = current
+            html = self.client.get("/bot").get_data(as_text=True)
+            self.assertIn(
+                f'const target = "{tracking.BOT_URL}?start={current.source}";', html,
+            )
+        self.create.assert_not_called()
 
     def test_cookie_enrichment_is_validated_and_no_arbitrary_data_is_saved(self):
         response = self.client.post("/bot/visit", json={
@@ -143,7 +155,7 @@ class MetaSettingsAndDeliveryTests(unittest.TestCase):
     def test_settings_payload_validation_and_no_secret_repr(self):
         self.assertTrue(SETTINGS.ready)
         self.assertNotIn(SETTINGS.token, repr(SETTINGS))
-        self.assertFalse(replace(SETTINGS, source="mv_reserved").ready)
+        self.assertTrue(replace(SETTINGS, source="mv_campaign").ready)
         self.assertFalse(replace(SETTINGS, source="x" * 65).ready)
         self.assertFalse(replace(SETTINGS, source="bad&source").ready)
         self.assertFalse(replace(SETTINGS, token="").ready)
@@ -151,11 +163,21 @@ class MetaSettingsAndDeliveryTests(unittest.TestCase):
             (["campaign_test"], "campaign_test"), (["unknown"], "unknown"),
             ([], ""), (["a", "b"], ""), (["bad?arg"], ""),
         ]:
-            self.assertEqual(tracking.start_attribution(args, 1700000000)["start"], expected)
+            attribution = tracking.start_attribution(args, 1700000000)
+            if expected:
+                self.assertEqual(attribution["start"], expected)
+            else:
+                self.assertIsNone(attribution)
         self.assertEqual(
             tracking.start_attribution(["campaign_test"], 1700000000)["event_time"],
             1700000000,
         )
+
+    def test_source_capture_does_not_require_meta_readiness(self):
+        with patch.object(tracking, "settings", return_value=replace(SETTINGS, token="")):
+            attribution = tracking.start_attribution(["other_source"])
+        self.assertEqual(attribution["start"], "other_source")
+        self.assertFalse(attribution["eligible"])
 
     @patch.object(tracking.config, "DATABASE_URL", "fake-test-db")
     @patch.object(meta_store, "finish_event")
@@ -297,7 +319,7 @@ class MetaPostgresTests(unittest.TestCase):
     def register(self, user=1, **kwargs):
         return meta_store.register_start(user, "Test", "", {**self.attribution, **kwargs})
 
-    def test_direct_start_and_duplicate_or_existing_user(self):
+    def test_direct_start_dedup_and_existing_user_with_empty_source(self):
         self.assertTrue(self.register())
         self.assertFalse(self.register())
         self.assertEqual(self.rows("SELECT meta_source_id FROM user_bot"), [(SETTINGS.source,)])
@@ -308,33 +330,61 @@ class MetaPostgresTests(unittest.TestCase):
         self.assertEqual(list(event["user_data"]), ["external_id"])
         self.assertRegex(event["user_data"]["external_id"][0], r"^[0-9a-f]{64}$")
         self.rows("INSERT INTO user_bot (chat_id) VALUES (2) RETURNING chat_id")
+        self.assertTrue(self.register(2))
         self.assertFalse(self.register(2))
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(1,)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(2,)])
+        self.assertEqual(self.rows(
+            "SELECT meta_source_id FROM user_bot WHERE chat_id = 2",
+        ), [(SETTINGS.source,)])
 
-    def test_organic_unknown_and_later_campaign_are_never_retroactive(self):
+    def test_any_source_is_saved_but_only_matching_source_queues_event(self):
         for user, payload in [(1, ""), (2, "other_source"), (3, "mv_" + "z" * 32)]:
             self.assertFalse(self.register(user, start=payload))
-            self.assertFalse(self.register(user))
+            self.assertEqual(self.rows(
+                "SELECT meta_source_id FROM user_bot WHERE chat_id = %s", (user,),
+            ), [(payload or None,)])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
-        self.assertEqual(self.rows("SELECT DISTINCT meta_source_id FROM user_bot"), [(None,)])
+        for user in (1, 2, 3):
+            self.assertTrue(self.register(user))
+            self.assertFalse(self.register(user))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(3,)])
 
-    def test_visit_enrichment_consumption_and_token_not_stored_as_source(self):
-        token = "mv_" + "a" * 32
-        data = {"client_ip_address": "198.51.100.1", "fbc": "fb.1.1700000000000.real"}
-        meta_store.create_visit(token, SETTINGS.source, SETTINGS.pixel, data, 60)
-        meta_store.enrich_visit(token, {"fbp": "fb.1.1700000000000.123"})
-        self.assertTrue(self.register(start=token, test_code="TEST_FAKE"))
-        self.assertFalse(self.register(2, start=token))
+    def test_existing_matching_source_suppresses_event_without_outbox_receipt(self):
+        self.rows(
+            "INSERT INTO user_bot (chat_id, meta_source_id) VALUES (1, %s) RETURNING chat_id",
+            (SETTINGS.source,),
+        )
+        self.assertFalse(self.register())
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
+
+    def test_source_changes_are_saved_but_do_not_duplicate_prior_event(self):
+        self.assertTrue(self.register())
+        self.assertFalse(self.register(start="another_source"))
+        self.assertEqual(self.rows("SELECT meta_source_id FROM user_bot"), [("another_source",)])
+        self.assertFalse(self.register())
+        self.assertEqual(self.rows("SELECT meta_source_id FROM user_bot"), [(SETTINGS.source,)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(1,)])
+
+    def test_source_is_saved_when_meta_delivery_is_disabled(self):
+        self.assertFalse(self.register(eligible=False))
+        self.assertEqual(self.rows("SELECT meta_source_id FROM user_bot"), [(SETTINGS.source,)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
+        self.assertFalse(self.register())
+
+    def test_no_browser_data_is_guessed_for_shared_source_and_test_code_is_preserved(self):
+        meta_store.create_visit(
+            "mv_" + "a" * 32, SETTINGS.source, SETTINGS.pixel,
+            {"client_ip_address": "198.51.100.1", "fbc": "fb.1.1700000000000.real"}, 60,
+        )
+        self.assertTrue(self.register(test_code="TEST_FAKE"))
         body = self.rows("SELECT body FROM meta_bot_events")[0][0]
         self.assertEqual(body["test_event_code"], "TEST_FAKE")
-        self.assertEqual(body["data"][0]["user_data"]["fbc"], data["fbc"])
-        self.assertIn("fbp", body["data"][0]["user_data"])
-        self.assertEqual(self.rows("SELECT user_data FROM meta_bot_visits"), [({},)])
+        self.assertEqual(list(body["data"][0]["user_data"]), ["external_id"])
         self.assertEqual(self.rows(
             "SELECT meta_source_id FROM user_bot WHERE chat_id = 1",
         ), [(SETTINGS.source,)])
 
-    def test_expired_visit_changed_campaign_and_pixel_do_not_match(self):
+    def test_legacy_visit_tokens_are_nonmatching_sources_and_expired_records_are_cleaned(self):
         for user, source, pixel, ttl in [
             (1, SETTINGS.source, SETTINGS.pixel, -1),
             (2, "previous_campaign", SETTINGS.pixel, 60),
@@ -353,15 +403,21 @@ class MetaPostgresTests(unittest.TestCase):
         self.assertEqual(results.count(True), 1)
         self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(1,)])
 
-    def test_concurrent_accounts_cannot_reuse_visit(self):
-        token = "mv_" + "b" * 32
-        meta_store.create_visit(token, SETTINGS.source, SETTINGS.pixel, {}, 60)
+    def test_shared_campaign_link_works_for_multiple_accounts(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             results = list(executor.map(
-                lambda user: self.register(user, start=token), range(1, 5),
+                lambda user: self.register(user), range(1, 5),
             ))
-        self.assertEqual(results.count(True), 1)
+        self.assertEqual(results.count(True), 4)
         self.assertEqual(self.rows("SELECT COUNT(*) FROM user_bot"), [(4,)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(4,)])
+
+    def test_concurrent_existing_user_starts_queue_once(self):
+        self.rows("INSERT INTO user_bot (chat_id) VALUES (1) RETURNING chat_id")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            results = list(executor.map(lambda _: self.register(), range(6)))
+        self.assertEqual(results.count(True), 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(1,)])
 
     def test_transaction_rolls_back_registration_when_outbox_fails(self):
         with meta_store.transaction() as cursor:

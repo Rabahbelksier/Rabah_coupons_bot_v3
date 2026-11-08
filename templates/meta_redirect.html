@@ -14,20 +14,6 @@
       // prevent opening Telegram.
       window.setTimeout(function () { window.location.replace(target); }, 800);
       {% if pixel %}
-      const token = {{ token | tojson }};
-      function cookie(name) {
-        const part = document.cookie.split("; ").find(x => x.startsWith(name + "="));
-        return part ? part.slice(name.length + 1) : "";
-      }
-      function enrich() {
-        if (!token) return;
-        const data = JSON.stringify({token: token, fbp: cookie("_fbp")});
-        try {
-          navigator.sendBeacon("/bot/visit", new Blob([data], {type: "application/json"}));
-        } catch (_) {
-          // Best effort only; never wait for the network before redirecting.
-        }
-      }
       !function(f,b,e,v,n,t,s)
       {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
       n.callMethod.apply(n,arguments):n.queue.push(arguments)};
@@ -38,9 +24,6 @@
       fbq('init', {{ pixel | tojson }});
       fbq('track', 'PageView');
       fbq('trackCustom', 'TelegramClick');
-      window.setTimeout(enrich, 350);
-      window.setTimeout(enrich, 700);
-      window.addEventListener("pagehide", enrich);
       {% endif %}
     })();
   </script>

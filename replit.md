@@ -108,10 +108,14 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - Tracking is off by default. `META_TRACKING_ENABLED=true` requires a configured
   `META_PIXEL_ID`, `META_ATTRIBUTION_ID`, `META_CAPI_ACCESS_TOKEN` and database.
 - The page sends browser `PageView` and custom `TelegramClick`, then redirects
-  after 800 ms using a unique visit token. A new user's eligible `/start` queues
-  custom `TelegramBotStart` with `action_source=chat`; old/organic users are not
-  reattributed. Direct campaign start links are also supported.
-- `user_bot.meta_source_id` stores the fixed campaign source, not the visit token.
+  after 800 ms to `https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}`,
+  substituting the configured source literally, not a visit token.
+- Every valid `/start SOURCE` saves that source in `user_bot.meta_source_id`,
+  including nonmatching sources and existing users. Only a matching source can
+  queue `TelegramBotStart` (`action_source=chat`); a previously saved matching
+  source or existing durable event receipt prevents a duplicate event.
+- A shared campaign payload cannot reliably link a bot account to its browser
+  visit; browser identifiers are not guessed or attached to the bot event.
 - The optional `META_TEST_EVENT_CODE` applies to newly queued CAPI test events.
   All settings, privacy prerequisites, retention and rollout instructions are
   documented in `docs/meta-tracking.md`.

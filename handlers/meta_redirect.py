@@ -1,7 +1,6 @@
 """An invisible tracking/redirect page on the bot's existing Flask server."""
 
 import logging
-import secrets
 from urllib.parse import urlsplit
 
 from flask import Blueprint, Response, render_template, request
@@ -9,7 +8,7 @@ from flask import Blueprint, Response, render_template, request
 from core import meta_store
 from services.meta_tracking import (
     BOT_URL, VISIT_PATTERN, browser_cookies, privacy_opt_out,
-    request_user_data, settings,
+    settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,26 +27,17 @@ def private_response(response):
 @meta_redirect.get("/bot")
 def redirect_to_bot():
     current = settings()
-    token = ""
     pixel = ""
     target = BOT_URL
-    if current.ready and not privacy_opt_out(request):
-        pixel = current.pixel
-        token = "mv_" + secrets.token_urlsafe(24)
-        try:
-            meta_store.create_visit(
-                token, current.source, current.pixel,
-                request_user_data(request, current), current.ttl,
-            )
-            target += f"?start={token}"
-        except Exception:
-            logger.warning("Meta visit storage unavailable; using direct campaign link")
-            token = ""
+    if current.enabled and not privacy_opt_out(request):
+        if current.source_valid:
             target += f"?start={current.source}"
-    elif current.enabled and not current.ready:
-        logger.warning("Meta redirect is untracked: configuration is incomplete")
+        if current.browser_ready:
+            pixel = current.pixel
+        if not current.source_valid or not current.browser_ready:
+            logger.warning("Meta redirect configuration is incomplete")
     response = Response(render_template(
-        "meta_redirect.html", target=target, pixel=pixel, token=token,
+        "meta_redirect.html", target=target, pixel=pixel,
     ), mimetype="text/html")
     return response
 

@@ -94,7 +94,7 @@ def enrich_visit(token, user_data):
 
 
 def register_start(chat_id, first_name, last_name, attribution):
-    """Insert a new user and, if eligible, exactly one durable conversion."""
+    """Save any received source; queue at most one matching conversion."""
     with transaction() as cursor:
         cursor.execute(
             """
@@ -102,45 +102,37 @@ def register_start(chat_id, first_name, last_name, attribution):
                 chat_id, first_name, last_name,
                 requests_today, requests_this_month, requests_last_month
             ) VALUES (%s, %s, %s, 0, 0, 0)
-            ON CONFLICT (chat_id) DO NOTHING RETURNING chat_id
+            ON CONFLICT (chat_id) DO NOTHING
             """,
             (chat_id, first_name, last_name),
         )
-        if cursor.fetchone() is None:
-            return False
-
+        # Existing users with an empty/different source are eligible too.
+        # Lock before reading/updating to serialize concurrent start commands.
+        cursor.execute(
+            "SELECT meta_source_id FROM user_bot WHERE chat_id = %s FOR UPDATE",
+            (chat_id,),
+        )
+        previous_source = cursor.fetchone()[0]
         source = attribution["source"]
         payload = attribution["start"]
-        user_data = {}
-        if payload.startswith("mv_"):
-            # Row locking serializes different accounts using the same link.
-            cursor.execute(
-                """
-                SELECT user_data FROM meta_bot_visits
-                WHERE token_hash = %s AND source_id = %s AND pixel_id = %s
-                  AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
-                FOR UPDATE
-                """,
-                (digest(payload), source, attribution["pixel"]),
-            )
-            visit = cursor.fetchone()
-            if visit is None:
-                return False
-            user_data = visit[0]
-            cursor.execute(
-                """
-                UPDATE meta_bot_visits SET consumed_at = CURRENT_TIMESTAMP,
-                    user_data = '{}'::jsonb WHERE token_hash = %s
-                """,
-                (digest(payload),),
-            )
-        elif not payload or payload != source:
+        if not payload:
+            return False
+        cursor.execute(
+            "UPDATE user_bot SET meta_source_id = %s WHERE chat_id = %s",
+            (payload, chat_id),
+        )
+        if (
+            payload != source or previous_source == source
+            or not attribution.get("eligible", True)
+        ):
             return False
 
         # Names are neither verified nor necessary. Never invent email/phone or
         # send Telegram IDs as Facebook login IDs. Hash a namespaced external ID.
         user_key = digest(f"telegram:rabahcoupons1bot:{chat_id}")
-        user_data["external_id"] = [user_key]
+        # A shared campaign payload cannot identify a browser visit. Never
+        # attach a stranger's IP/cookies by guessing from timing or IP address.
+        user_data = {"external_id": [user_key]}
         body = {
             "data": [{
                 "event_name": "TelegramBotStart",
@@ -162,10 +154,6 @@ def register_start(chat_id, first_name, last_name, attribution):
         )
         if cursor.fetchone() is None:
             return False
-        cursor.execute(
-            "UPDATE user_bot SET meta_source_id = %s WHERE chat_id = %s",
-            (source, chat_id),
-        )
         return True
 
 
