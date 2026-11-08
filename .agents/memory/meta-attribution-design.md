@@ -13,7 +13,7 @@ Save a received source for existing users too, even if their previous source is 
 
 Use a visible subscription button on `/bot`, not an automatic redirect. PageView belongs to page display, TelegramClick to actual button clicks, and TelegramBotStart to a qualifying received start command.
 
-**Why:** The user replaced their earlier automatic-redirect preference with an explicit request for a button and this event timing after observing missing start parameters.
+**Why:** The user replaced their earlier automatic-redirect preference with an explicit request for a button and this event timing after observing missing start parameters. They subsequently confirmed that this restored start delivery and campaign-source saving.
 
 Basic bot-user registration must remain independent of optional Meta persistence failures. Preserve atomic source/event capture, but allow it to retry later for an existing user whose campaign source was not saved.
 
