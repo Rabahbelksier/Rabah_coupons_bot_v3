@@ -107,15 +107,20 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - The existing Flask server serves `/bot`; no separate website process is needed.
 - Tracking is off by default. `META_TRACKING_ENABLED=true` requires a configured
   `META_PIXEL_ID`, `META_ATTRIBUTION_ID`, `META_CAPI_ACCESS_TOKEN` and database.
-- The page stores a short-lived visit with the configured campaign source and
-  available browser matching data, sends `PageView` and `TelegramClick`, then
-  redirects to `https://t.me/rabahcoupons1bot?start=mv_<random token>`.
-  Only a token hash is stored. Cookie enrichment cannot delay navigation by
-  more than 250 ms beyond the original 800 ms timer.
+- The visible Arabic page stores a short-lived visit with the campaign source
+  and browser matching data. `PageView` fires on load; `TelegramClick` fires
+  only on the real Telegram button click. No automatic redirect. The button
+  targets `https://t.me/rabahcoupons1bot?start=mv_<random token>`.
+  Cookie enrichment never intercepts native navigation. Without collection,
+  the button still retains the valid configured direct campaign source.
 - A visit `/start` resolves and claims that visit for one account, saves the
   original campaign in `user_bot.meta_source_id` (never the token), and can
   attach only that visit's browser matching data. Unknown/expired/reused tokens
   leave attribution unchanged; basic bot registration still works.
+- Redeeming a visit also copies nullable browser fields into the Telegram user's
+  own row: `meta_visit_id` (token hash), `meta_pixel_id`, `meta_fbp`, `meta_fbc`,
+  `meta_client_ip_address`, `meta_client_user_agent`, `meta_visit_at`. These
+  snapshots follow account retention, independently of expiring visit records.
 - Direct valid `/start SOURCE` links still save that source,
   including nonmatching sources and existing users. Only a matching source can
   queue `TelegramBotStart` (`action_source=chat`); a previously saved matching
@@ -127,7 +132,7 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
   All settings, privacy prerequisites, retention and rollout instructions are
   documented in `docs/meta-tracking.md`.
 - Do not enable tracking before the operator has established any required
-  consent/lawful basis; the invisible redirect is not a consent interface.
+  consent/lawful basis; the subscription button is not itself tracking consent.
 
 ## Deployment Files
 - `requirements.txt`: Python dependencies

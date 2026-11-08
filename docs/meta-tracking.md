@@ -2,18 +2,18 @@
 
 ## What this integration does
 
-The existing Flask server now serves `/bot`. The invisible page schedules a
-redirect to `rabahcoupons1bot` after 800 ms, just like the previous site, and
-queues only the browser events `PageView` and custom `TelegramClick`. Here
-`TelegramClick` means the automatic outbound redirect; it does not prove the
-Telegram application opened. Browser blockers, fast navigation and network
-failures can prevent browser events from arriving.
+The existing Flask server serves `/bot` as an Arabic subscription page with a
+real Telegram button. It never redirects automatically. `PageView` is queued
+only when the page loads; custom `TelegramClick` is queued only when the button
+is clicked. A click does not prove the Telegram application opened. Browser
+blockers, fast navigation and network failures can prevent browser events
+from arriving.
 
 Opening Telegram is **not** a subscription event. Receipt of an eligible
 campaign `/start` queues the custom server event `TelegramBotStart`.
 Telegram may require the user to press **Start** first.
 
-The redirect page does not change posts, bot replies, existing search, channel
+The subscription page does not change posts, bot replies, existing search, channel
 monitoring, publishing or other website features.
 
 ## Configuration
@@ -34,19 +34,20 @@ the application.
 | `META_TRUSTED_PROXY_HOPS` | Default 0. Trust forwarded IPs only after verifying the deployment's proxy contract; otherwise the request's direct remote address is used. |
 
 Existing bot credentials and external PostgreSQL settings remain necessary.
-Startup adds a nullable `meta_source_id` to `user_bot` and the separate tracking
+Startup adds nullable attribution fields to `user_bot` and the separate tracking
 tables. It does not replace the existing database or rewrite existing users.
 
 When enabled, `/bot` creates a visit containing the configured source even if
 CAPI credentials are unavailable. If visit storage fails, it falls back to the
 direct campaign link so onboarding still works without browser matching.
 Browser events need only the enabled switch and valid pixel ID; they do not
-depend on CAPI readiness. Disabled tracking and privacy opt-outs still use the
-ordinary bot link without Pixel initialization or visit collection.
+depend on CAPI readiness. Disabled tracking and privacy opt-outs skip Pixel
+initialization and visit collection, but the button still carries the configured
+campaign source if valid. Browser collection controls never strip that source.
 
 ## Visit links, direct sources and saving
 
-For an eligible tracked visit, the redirect is:
+For an eligible tracked visit, the button's URL is:
 
 `https://t.me/rabahcoupons1bot?start=mv_<32 random URL-safe characters>`
 
@@ -57,9 +58,10 @@ identity. Treat a copied visit URL as a bearer capability; do not share it.
 
 The initial request captures valid `_fbp`/`_fbc`, a valid `fbclid` converted to
 `fbc`, request IP under the configured proxy policy, and bounded user-agent.
-Before redirecting, the page sends a same-origin request with Pixel cookies.
-This enrichment waits at most 250 ms beyond the 800 ms redirect timer; blocked,
-failed or stalled JavaScript requests never prevent opening Telegram.
+The page enriches the visit with Pixel cookies shortly after load and again
+on a real button click. Requests use same-origin keepalive fetch. The click
+handler never intercepts, delays or replaces native anchor navigation: the
+button still opens Telegram when JavaScript, Pixel or enrichment is blocked.
 
 On receipt of a `/start mv_...`, a database transaction:
 
@@ -81,6 +83,27 @@ Direct links such as `?start=fbads` still work: a valid non-visit source is
 saved literally, including nonmatching sources, but no browser visit is guessed.
 The `mv_` prefix followed by exactly 32 URL-safe characters is reserved for visit
 tokens. Browser data is never matched using IP or timing.
+
+### User-row browser fields
+
+Redeeming a valid visit copies these values into the same `user_bot` row as
+the Telegram account; all fields are nullable for ordinary/legacy users:
+
+| Column | Value |
+| --- | --- |
+| `meta_source_id` | Original campaign source captured from `META_ATTRIBUTION_ID`, not the random token. |
+| `meta_visit_id` | SHA-256 digest of the exact redeemed visit token; raw bearer tokens are never stored. |
+| `meta_pixel_id` | Visit's pixel snapshot. |
+| `meta_fbp`, `meta_fbc` | Available validated Meta cookies/click identifier. An initial click-derived `fbc` wins over a stale browser cookie. |
+| `meta_client_ip_address` | Request IP under the configured proxy-trust policy. |
+| `meta_client_user_agent` | Bounded browser user-agent. |
+| `meta_visit_at` | Original visit timestamp. |
+
+An unavailable element stays NULL rather than being invented. A fresh valid
+visit updates these browser fields even when the account already has the
+matching source and therefore must not queue another event. Direct source-only
+starts preserve the last proven visit fields but do not reuse them in a new
+event. Expired, unknown and another account's tokens cannot alter these fields.
 
 Existing users with an empty or different source are eligible under the user's
 clarified rule. A nonmatching source is saved without an event. A later valid
@@ -109,16 +132,18 @@ A direct campaign link follows the same registration rules but generates no
 
 The controller must provide an appropriate privacy notice and establish a
 lawful basis and any required consent **before** enabling this integration.
-An invisible redirect cannot obtain consent by itself. If consent is required
+A subscription button is not tracking consent by itself. If consent is required
 for your visitors, keep tracking disabled until your upstream flow obtains it
 for every tracked visitor; do not enable it globally for mixed-consent traffic.
 The existing notice must explain Meta sharing and retention.
 
-The page also honors `Sec-GPC: 1`, `DNT: 1`, and the first-party cookie
-`meta_consent=denied`: these requests redirect organically without collection,
-Pixel initialization or a campaign start payload. Direct Telegram campaign
-links do not carry browser consent state; enabling that campaign requires a
-lawful basis for the bot event itself as well.
+The page honors `Sec-GPC: 1`, `DNT: 1`, and the first-party cookie
+`meta_consent=denied` for browser collection: no visit is created and Pixel is
+not initialized. The button retains a valid configured campaign start payload.
+Such direct Telegram campaign links do not carry browser consent state; the
+server may process a matching source under the normal bot-event eligibility
+rules. Enabling that campaign requires a lawful basis for the bot event itself
+as well. Do not rely on a shared start payload to convey browser consent.
 
 The browser Pixel sends its own page/click matching data, subject to browser
 restrictions and consent. A redeemed visit token additionally supplies its
@@ -132,7 +157,10 @@ Email, phone and unverified Telegram display names are not invented or sent.
 Visit records retain bounded browser matching data and a hashed account claim
 until their expiration, then hourly maintenance deletes them. After a visit is
 claimed, browser enrichment cannot change it. Expired tokens cannot create an
-attribution even before maintenance physically deletes their records.
+attribution even before maintenance physically deletes their records. Browser
+snapshots copied into `user_bot` remain with that account; visit expiration and
+event delivery do not erase those user-row columns. Include them in the bot's
+account retention, access and deletion policy.
 Delivery payloads are erased upon successful delivery or permanent failure,
 and pending payloads expire after six days (before Meta's seven-day event-age
 limit). Maintenance continues when tracking is disabled, provided the bot
@@ -188,9 +216,11 @@ not Meta's special Messenger/WhatsApp business-messaging API.
    using a real test ad click if `fbclid` matching is being checked. Do not
    fabricate `fbclid`. In the browser, verify `PageView` and `TelegramClick`
    with Meta's browser tools; these browser events do not use the CAPI test code.
+   Before clicking, only PageView should be queued. Click the Telegram button
+   to queue TelegramClick and navigate; waiting alone must never navigate.
    Confirm the Telegram link contains a fresh `start=mv_...` token, and that
    `meta_bot_visits` stores only its hash with the configured source. A privacy
-   opt-out intentionally uses the ordinary link without creating a visit.
+   opt-out retains the direct campaign link but does not create a visit.
 4. Use a test Telegram account without a previously saved matching source or
    prior conversion to press Start. An existing account with an empty/different
    source is eligible. Verify `TelegramBotStart` under Test Events with

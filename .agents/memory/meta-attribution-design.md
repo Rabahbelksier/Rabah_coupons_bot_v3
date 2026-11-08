@@ -5,15 +5,15 @@ description: User-approved visit-token experiment, source saving for existing us
 
 The user approved implementing the random visit-token approach to try linking browser matching data to a Telegram start. This supersedes their earlier requirement to put the campaign source itself in every redirect URL. The campaign source, not the random token, must still be saved as the user's source; direct source links must continue working.
 
-**Why:** After discussing that browser information alone cannot identify a Telegram account, the user explicitly requested implementing the visit-token flow for testing without breaking other bot functions.
+**Why:** After discussing that browser information alone cannot identify a Telegram account, the user explicitly approved visit-token links and reaffirmed that META_ATTRIBUTION_ID must remain the original stored campaign source.
 
 Save a received source for existing users too, even if their previous source is empty or different. The user clarified: “نحفظ المصدر ايا كان ونرسل الحدث ان كان مطابقا لMETA_ATTRIBUTION_ID”. This supersedes the earlier restriction to brand-new users.
 
 **Why:** The user explicitly confirmed this rule when asked about existing users with an empty source.
 
-Keep `/bot` as an automatic redirect, not a page requiring a navigation button.
+Use a visible subscription button on `/bot`, not an automatic redirect. PageView belongs to page display, TelegramClick to actual button clicks, and TelegramBotStart to a qualifying received start command.
 
-**Why:** The user explicitly chose “الإبقاء على التحويل التلقائي” when offered a direct-click button to address the native Telegram handoff.
+**Why:** The user replaced their earlier automatic-redirect preference with an explicit request for a button and this event timing after observing missing start parameters.
 
 Basic bot-user registration must remain independent of optional Meta persistence failures. Preserve atomic source/event capture, but allow it to retry later for an existing user whose campaign source was not saved.
 

@@ -2,46 +2,307 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <meta name="referrer" content="no-referrer">
-  <title>الانتقال إلى بوت تلجرام</title>
+  <meta name="theme-color" content="#f5f2e9">
+  <title>افتح بوت رابح للقسائم</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f5f2e9;
+      --card: #fffdf7;
+      --ink: #172d2a;
+      --muted: #697a72;
+      --line: #dce2d8;
+      --green: #176b52;
+      --green-deep: #10533f;
+      --lime: #d8ec8b;
+      --rust: #d66a46;
+      --shadow: 0 24px 64px rgba(34, 62, 49, .12), 0 3px 10px rgba(34, 62, 49, .05);
+      --font-ar: "Noto Sans Arabic", "Tahoma", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: var(--paper); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 28px 18px;
+      color: var(--ink);
+      font-family: var(--font-ar);
+      background:
+        radial-gradient(ellipse at 8% 15%, rgba(216, 236, 139, .34), transparent 29rem),
+        radial-gradient(ellipse at 95% 90%, rgba(214, 106, 70, .12), transparent 27rem),
+        var(--paper);
+    }
+    .page {
+      width: min(100%, 486px);
+      animation: arrive .65s cubic-bezier(.2, .75, .25, 1) both;
+    }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 4px 15px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(23, 107, 82, .18);
+      border-radius: 11px;
+      background: var(--lime);
+      color: var(--green-deep);
+    }
+    .brand-mark svg { width: 19px; height: 19px; }
+    .secure-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .secure-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(23, 107, 82, .1);
+    }
+    .card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(39, 76, 57, .12);
+      border-radius: 27px;
+      padding: 34px 32px 25px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .card::before {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: 5px;
+      background: linear-gradient(90deg, var(--rust) 0 17%, var(--lime) 17% 46%, var(--green) 46% 100%);
+      content: "";
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .eyebrow-line {
+      width: 22px;
+      height: 2px;
+      border-radius: 3px;
+      background: var(--rust);
+    }
+    h1 {
+      margin: 13px 0 11px;
+      max-width: 370px;
+      font-size: clamp(28px, 7vw, 37px);
+      font-weight: 900;
+      letter-spacing: -.055em;
+      line-height: 1.4;
+    }
+    .intro {
+      max-width: 370px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.9;
+    }
+    .destination {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin: 26px 0 20px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #f8f8f0;
+    }
+    .destination-icon {
+      width: 43px;
+      height: 43px;
+      flex: 0 0 43px;
+      display: grid;
+      place-items: center;
+      border-radius: 13px;
+      background: #e4efcf;
+      color: var(--green-deep);
+    }
+    .destination-icon svg { width: 23px; height: 23px; }
+    .destination-copy { min-width: 0; }
+    .destination-title {
+      display: block;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .destination-subtitle {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .destination-check {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 20px;
+      margin-right: auto;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--green);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .subscribe {
+      min-height: 59px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 11px;
+      border: 0;
+      border-radius: 15px;
+      padding: 14px 20px;
+      color: #fffdf7;
+      background: var(--green);
+      box-shadow: 0 7px 0 var(--green-deep), 0 13px 22px rgba(23, 107, 82, .17);
+      font: inherit;
+      font-size: 16px;
+      font-weight: 850;
+      text-decoration: none;
+      transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .subscribe:hover {
+      background: #1c795d;
+      transform: translateY(-2px);
+      box-shadow: 0 9px 0 var(--green-deep), 0 16px 25px rgba(23, 107, 82, .2);
+    }
+    .subscribe:active {
+      transform: translateY(4px);
+      box-shadow: 0 3px 0 var(--green-deep), 0 7px 13px rgba(23, 107, 82, .14);
+    }
+    .subscribe:focus-visible {
+      outline: 3px solid var(--rust);
+      outline-offset: 5px;
+    }
+    .subscribe svg { width: 21px; height: 21px; }
+    .handoff-hint {
+      margin: 16px 4px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.8;
+      text-align: center;
+    }
+    .privacy {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 25px;
+      padding-top: 19px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.85;
+    }
+    .privacy svg {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 17px;
+      margin-top: 2px;
+      color: var(--green);
+    }
+    .privacy strong { color: var(--ink); font-weight: 800; }
+    @keyframes arrive {
+      from { opacity: 0; transform: translateY(13px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-width: 420px) {
+      body { padding: 20px 14px; }
+      .card { padding: 29px 22px 22px; border-radius: 23px; }
+      h1 { font-size: 29px; }
+      .intro { font-size: 14px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
 </head>
 <body>
-  <script>
-    window.setTimeout(function () {
-      {% if visit_token %}
-      var redirected = false;
-      function goToTelegram() {
-        if (redirected) return;
-        redirected = true;
-        window.location.replace({{ target | tojson }});
-      }
-      // Capture cookies created by Pixel, but never let enrichment block
-      // opening Telegram. The server already captured the initial request.
-      window.setTimeout(goToTelegram, 250);
-      try {
-        var data = {token: {{ visit_token | tojson }}};
-        document.cookie.split(';').forEach(function (item) {
-          var parts = item.trim().split('=');
-          if (parts[0] === '_fbp') data.fbp = parts.slice(1).join('=');
-          if (parts[0] === '_fbc') data.fbc = parts.slice(1).join('=');
-        });
-        fetch('/bot/visit', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          keepalive: true,
-          body: JSON.stringify(data)
-        }).then(goToTelegram, goToTelegram);
-      } catch (error) {
-        goToTelegram();
-      }
-      {% else %}
-      window.location.replace({{ target | tojson }});
-      {% endif %}
-    }, 800);
+  <main class="page">
+    <header class="masthead" aria-label="رابح للقسائم">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v1a2.5 2.5 0 0 0 0 5v1a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 14.5v-1a2.5 2.5 0 0 0 0-5v-1Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="m9 14 6-6M9.2 9.2h.01M14.8 14.8h.01" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span>رابح للقسائم</span>
+      </div>
+      <span class="secure-label"><span class="secure-dot" aria-hidden="true"></span>رابط آمن إلى تلجرام</span>
+    </header>
 
-    {% if pixel %}
+    <section class="card" aria-labelledby="page-title">
+      <div class="eyebrow"><span class="eyebrow-line" aria-hidden="true"></span>خطوة واحدة للبدء</div>
+      <h1 id="page-title">قسائم التسوق،<br>على تلجرام.</h1>
+      <p class="intro">اضغط للانتقال إلى بوت رابح. ستفتح المحادثة في تطبيق تلجرام أو في المتصفح.</p>
+
+      <div class="destination">
+        <span class="destination-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="m20.4 4.6-3.1 14.6c-.2 1-1 1.2-1.8.7l-4.8-3.5-2.3 2.2c-.3.3-.5.5-1 .5l.4-4.9 9-8.1c.4-.4-.1-.6-.6-.3L5.1 12.6.4 11.1c-1-.3-1-1 .2-1.5L18.9 2.5c.9-.3 1.7.2 1.5 2.1Z" transform="translate(1 1)" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="destination-copy">
+          <span class="destination-title">بوت رابح للقسائم</span>
+          <span class="destination-subtitle">يفتح مباشرةً في تلجرام</span>
+        </span>
+        <span class="destination-check" aria-hidden="true">✓</span>
+      </div>
+
+      <a class="subscribe" id="telegram-subscribe" href="{{ target }}">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m20.4 4.6-3.1 14.6c-.2 1-1 1.2-1.8.7l-4.8-3.5-2.3 2.2c-.3.3-.5.5-1 .5l.4-4.9 9-8.1c.4-.4-.1-.6-.6-.3L5.1 12.6.4 11.1c-1-.3-1-1 .2-1.5L18.9 2.5c.9-.3 1.7.2 1.5 2.1Z" transform="translate(1 1)" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+        <span>اشتراك في بوت تلجرام</span>
+      </a>
+      <p class="handoff-hint">قد يطلب منك تلجرام الضغط على «Start» لبدء المحادثة.</p>
+
+      <aside class="privacy">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3 19 6v5c0 4.6-2.9 8.2-7 10-4.1-1.8-7-5.4-7-10V6l7-3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span><strong>عن الخصوصية:</strong> عند السماح بالتتبع، قد تُحفظ بيانات الزيارة وتُربط بحساب تلجرام لقياس فعالية الإعلان عبر Meta.</span>
+      </aside>
+    </section>
+  </main>
+
+  {% if pixel %}
+  <script>
     !function(f,b,e,v,n,t,s)
     {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
     n.callMethod.apply(n,arguments):n.queue.push(arguments)};
@@ -49,12 +310,56 @@
     n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;
     s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
     (window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-
     fbq('init', {{ pixel | tojson }});
     fbq('track', 'PageView');
-    fbq('trackCustom', 'TelegramClick');
-    {% endif %}
   </script>
-  <noscript><a href="{{ target }}">فتح بوت تلجرام</a></noscript>
+  {% endif %}
+  <script>
+    (function () {
+      var subscribeLink = document.getElementById('telegram-subscribe');
+      if (!subscribeLink) return;
+
+      {% if visit_token %}
+      var visitToken = {{ visit_token | tojson }};
+      function sendCookieEnrichment() {
+        try {
+          var cookies = {};
+          document.cookie.split(';').forEach(function (part) {
+            var separator = part.indexOf('=');
+            if (separator < 0) return;
+            var name = part.slice(0, separator).trim();
+            if (name === '_fbp' || name === '_fbc') {
+              cookies[name] = part.slice(separator + 1).trim();
+            }
+          });
+          var request = fetch('/bot/visit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            credentials: 'same-origin',
+            keepalive: true,
+            body: JSON.stringify({
+              token: visitToken,
+              fbp: cookies._fbp || '',
+              fbc: cookies._fbc || ''
+            })
+          });
+          if (request && typeof request.catch === 'function') request.catch(function () {});
+        } catch (error) {}
+      }
+      window.setTimeout(sendCookieEnrichment, 300);
+      {% endif %}
+
+      subscribeLink.addEventListener('click', function () {
+        {% if pixel %}
+        try {
+          if (typeof window.fbq === 'function') window.fbq('trackCustom', 'TelegramClick');
+        } catch (error) {}
+        {% endif %}
+        {% if visit_token %}
+        sendCookieEnrichment();
+        {% endif %}
+      });
+    }());
+  </script>
 </body>
 </html>

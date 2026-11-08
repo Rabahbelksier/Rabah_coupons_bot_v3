@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 SCHEMA = """
 ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_source_id TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_visit_id TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_pixel_id TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_fbp TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_fbc TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_client_ip_address TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_client_user_agent TEXT;
+ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_visit_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS meta_bot_visits (
     token_hash TEXT PRIMARY KEY,
     source_id TEXT NOT NULL,
@@ -88,11 +95,14 @@ def enrich_visit(token, user_data):
     with transaction() as cursor:
         cursor.execute(
             """
-            UPDATE meta_bot_visits SET user_data = user_data || %s::jsonb
+            UPDATE meta_bot_visits
+            SET user_data = user_data ||
+                CASE WHEN user_data ? 'fbc' THEN (%s::jsonb - 'fbc')
+                     ELSE %s::jsonb END
             WHERE token_hash = %s AND consumed_at IS NULL
               AND expires_at > CURRENT_TIMESTAMP
             """,
-            (json.dumps(user_data), digest(token)),
+            (json.dumps(user_data), json.dumps(user_data), digest(token)),
         )
 
 
@@ -141,7 +151,7 @@ def _save_source_and_event(cursor, chat_id, attribution):
         user_key = digest(f"telegram:rabahcoupons1bot:{chat_id}")
         cursor.execute(
             """
-            SELECT source_id, pixel_id, user_data FROM meta_bot_visits
+            SELECT source_id, pixel_id, user_data, created_at FROM meta_bot_visits
             WHERE token_hash = %s AND expires_at > CURRENT_TIMESTAMP
               AND (consumed_at IS NULL OR consumed_by = %s)
             FOR UPDATE
@@ -152,7 +162,7 @@ def _save_source_and_event(cursor, chat_id, attribution):
         if visit is None:
             # Unknown, expired and another account's tokens are not sources.
             return False
-        payload, visit_pixel, browser_data = visit
+        payload, visit_pixel, browser_data, visit_at = visit
         cursor.execute(
             """
             UPDATE meta_bot_visits
@@ -161,6 +171,21 @@ def _save_source_and_event(cursor, chat_id, attribution):
             WHERE token_hash = %s
             """,
             (user_key, digest(token)),
+        )
+        # Account association is proven only by redeeming this exact visit.
+        # Store its digest, not the raw bearer token, on the user's own row.
+        cursor.execute(
+            """
+            UPDATE user_bot SET meta_visit_id = %s, meta_pixel_id = %s,
+                meta_fbp = %s, meta_fbc = %s, meta_client_ip_address = %s,
+                meta_client_user_agent = %s, meta_visit_at = %s
+            WHERE chat_id = %s
+            """,
+            (
+                digest(token), visit_pixel, browser_data.get("fbp"),
+                browser_data.get("fbc"), browser_data.get("client_ip_address"),
+                browser_data.get("client_user_agent"), visit_at, chat_id,
+            ),
         )
         attribution = {
             **attribution,

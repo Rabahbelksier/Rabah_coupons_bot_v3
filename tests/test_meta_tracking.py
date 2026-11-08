@@ -53,7 +53,7 @@ class MetaRedirectTests(unittest.TestCase):
         self.settings, self.create, self.enrich, _ = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in self.patches])
 
-    def test_redirect_stores_campaign_and_uses_random_visit_with_two_browser_events(self):
+    def test_page_stores_campaign_and_provides_visit_button_without_auto_navigation(self):
         response = self.client.get(
             "/bot?fbclid=real_click", headers={"User-Agent": "test-browser"},
         )
@@ -65,7 +65,9 @@ class MetaRedirectTests(unittest.TestCase):
             TELEGRAM_CAMPAIGN_URL_TEMPLATE,
             "https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}",
         )
-        self.assertIn("}, 800)", html)
+        self.assertIn('id="telegram-subscribe"', html)
+        self.assertNotIn("window.location.replace", html)
+        self.assertNotIn("http-equiv=\"refresh\"", html)
         self.assertIn("fbq('track', 'PageView')", html)
         self.assertIn("fbq('trackCustom', 'TelegramClick')", html)
         self.assertNotIn("TelegramBotStart", html)
@@ -80,15 +82,12 @@ class MetaRedirectTests(unittest.TestCase):
         self.assertEqual(self.create.call_args.args[4], SETTINGS.ttl)
         self.assertNotIn("?start=campaign_test", html)
         self.assertNotIn("const target", html)
-        self.assertRegex(
-            html, r"<script>\s*window\.setTimeout\(function \(\) \{",
-        )
         self.assertIn("fetch('/bot/visit'", html)
         self.assertIn("keepalive: true", html)
         self.client.get("/bot")
         self.assertNotEqual(token, self.create.call_args.args[0])
 
-    def test_disabled_and_privacy_optout_are_organic(self):
+    def test_disabled_and_privacy_optout_preserve_button_source_without_collection(self):
         for current, headers in [
             (replace(SETTINGS, enabled=False), {}),
             (SETTINGS, {"Sec-GPC": "1"}),
@@ -98,7 +97,22 @@ class MetaRedirectTests(unittest.TestCase):
             response = self.client.get("/bot?fbclid=private", headers=headers)
             html = response.get_data(as_text=True)
             self.assertNotIn("fbq(", html)
-            self.assertNotIn("?start=", html)
+            self.assertIn("?start=campaign_test", html)
+            self.assertIn('id="telegram-subscribe"', html)
+        self.create.assert_not_called()
+
+    def test_denied_cookie_preserves_source_without_collecting_visit(self):
+        self.client.set_cookie("meta_consent", "denied")
+        html = self.client.get("/bot").get_data(as_text=True)
+        self.assertIn("?start=campaign_test", html)
+        self.assertNotIn("fbq(", html)
+        self.create.assert_not_called()
+
+    def test_invalid_campaign_never_injects_into_button(self):
+        self.settings.return_value = replace(SETTINGS, source='bad"><script>')
+        html = self.client.get("/bot").get_data(as_text=True)
+        self.assertIn(f'href="{tracking.BOT_URL}"', html)
+        self.assertNotIn('bad"><script>', html)
         self.create.assert_not_called()
 
     def test_storage_failure_preserves_campaign_redirect(self):
@@ -122,27 +136,37 @@ class MetaRedirectTests(unittest.TestCase):
         self.assertEqual(self.create.call_count, 3)
 
     @unittest.skipUnless(shutil.which("node"), "Node required for redirect-script checks")
-    def test_cookie_capture_and_redirect_survive_network_and_browser_failures(self):
+    def test_events_are_click_scoped_and_native_link_survives_tracking_failures(self):
         html = self.client.get("/bot").get_data(as_text=True)
-        script = re.search(r"<script>(.*?)</script>", html, re.S)[1]
-        # Exercise the real generated script without loading Pixel or calling
-        # Telegram/Meta. Simulate the browser timer and fetch APIs.
-        script = script.split("!function(f,b,e,v,n,t,s)")[0]
+        scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+        # Exercise both real scripts without any Telegram or Meta requests.
         token = self.create.call_args.args[0]
         harness = r"""
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const source = JSON.parse(process.argv[1]);
+const scripts = JSON.parse(process.argv[1]);
 const token = JSON.parse(process.argv[2]);
 (async function() {
-  for (const mode of ['ok', 'reject', 'throw', 'hang', 'missing']) {
-    let timers = [], redirects = [], captured;
+  for (const mode of ['ok', 'reject', 'throw', 'hang', 'missing', 'pixel-throws', 'pixel-blocked']) {
+    let timers = [], redirects = [], captured, click, calls = [];
+    const anchor = {
+      href: 'https://t.me/rabahcoupons1bot?start=' + token,
+      addEventListener: (name, fn) => { assert.equal(name, 'click'); click = fn; }
+    };
     const ctx = {
-      window: {
-        setTimeout: (fn, delay) => timers.push(fn),
-        location: {replace: url => redirects.push(url)}
-      },
-      document: {cookie: '_fbp=fb.1.1700000000000.123; _fbc=fb.1.1700000000000.click'}
+      setTimeout: fn => timers.push(fn),
+      location: {replace: url => redirects.push(url)},
+      document: {
+        cookie: '_fbp=fb.1.1700000000000.123; _fbc=fb.1.1700000000000.click',
+        getElementById: id => { assert.equal(id, 'telegram-subscribe'); return anchor; },
+        createElement: () => ({}),
+        getElementsByTagName: () => [{parentNode: {insertBefore: () => {}}}]
+      }
+    };
+    ctx.window = ctx;
+    if (mode !== 'pixel-blocked') ctx.fbq = (...args) => {
+      if (mode === 'pixel-throws') throw new Error('tracking blocked');
+      calls.push(args);
     };
     if (mode !== 'missing') ctx.fetch = (url, options) => {
       assert.equal(url, '/bot/visit');
@@ -152,12 +176,28 @@ const token = JSON.parse(process.argv[2]);
       if (mode === 'hang') return new Promise(() => {});
       return Promise.resolve({});
     };
-    vm.runInNewContext(source, ctx);
-    timers.shift()();
-    await Promise.resolve();
+    vm.createContext(ctx);
+    for (const source of scripts) {
+      try { vm.runInContext(source, ctx); }
+      catch (error) { if (mode !== 'pixel-throws') throw error; }
+    }
+    assert.equal(typeof click, 'function');
+    const events = () => mode === 'pixel-blocked'
+      ? Array.from(ctx.fbq.queue, args => Array.from(args)) : calls;
+    assert.equal(events().filter(args => args[1] === 'TelegramClick').length, 0);
+    assert.equal(events().filter(args => args[1] === 'PageView').length,
+                 mode === 'pixel-throws' ? 0 : 1);
     timers.forEach(fn => fn());
+    timers = [];
     await Promise.resolve();
-    assert.deepEqual(redirects, ['https://t.me/rabahcoupons1bot?start=' + token]);
+    assert.deepEqual(redirects, []);
+    click({preventDefault: () => { throw new Error('Native navigation intercepted'); }});
+    await Promise.resolve();
+    assert.deepEqual(redirects, []);
+    assert.equal(anchor.href, 'https://t.me/rabahcoupons1bot?start=' + token);
+    assert.equal(events().filter(args => args[1] === 'TelegramClick').length,
+                 mode === 'pixel-throws' ? 0 : 1);
+    assert.equal(events().filter(args => args[1] === 'TelegramBotStart').length, 0);
     if (captured) {
       assert.equal(captured.token, token);
       assert.equal(captured.fbp, 'fb.1.1700000000000.123');
@@ -167,7 +207,7 @@ const token = JSON.parse(process.argv[2]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(
-            ["node", "-e", harness, json.dumps(script), json.dumps(token)],
+            ["node", "-e", harness, json.dumps(scripts), json.dumps(token)],
             check=True, capture_output=True, text=True,
         )
 
@@ -178,7 +218,10 @@ const token = JSON.parse(process.argv[2]);
         })
         self.assertEqual(response.status_code, 204)
         self.enrich.assert_called_once_with(
-            "mv_" + "a" * 32, {"fbp": "fb.1.1700000000000.12345"},
+            "mv_" + "a" * 32, {
+                "fbp": "fb.1.1700000000000.12345",
+                "fbc": "fb.1.1700000000000.old",
+            },
         )
 
     def test_invalid_large_cross_origin_and_opted_out_beacons(self):
@@ -528,6 +571,17 @@ class MetaPostgresTests(unittest.TestCase):
             self.assertEqual(data["client_ip_address"], "198.51.100.9")
             self.assertEqual(data["client_user_agent"], "visit-test-browser")
             self.assertNotIn("email", data)
+            profile = self.rows("""
+                SELECT meta_source_id, meta_visit_id, meta_pixel_id, meta_fbp,
+                    meta_fbc, meta_client_ip_address, meta_client_user_agent,
+                    meta_visit_at IS NOT NULL
+                FROM user_bot WHERE chat_id = 42
+            """)
+            self.assertEqual(profile, [(
+                SETTINGS.source, meta_store.digest(token), SETTINGS.pixel,
+                data["fbp"], data["fbc"], data["client_ip_address"],
+                data["client_user_agent"], True,
+            )])
             self.assertEqual(self.rows("SELECT consumed_by FROM meta_bot_visits"),
                              [(meta_store.digest("telegram:rabahcoupons1bot:42"),)])
             with patch.object(tracking.requests, "post") as post:
@@ -573,6 +627,47 @@ class MetaPostgresTests(unittest.TestCase):
                          [("another_source",)])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
 
+    def test_nonmatching_visit_keeps_its_original_source_and_browser_columns(self):
+        token = "mv_" + "d" * 32
+        meta_store.create_visit(
+            token, "other_campaign", SETTINGS.pixel,
+            {"fbp": "fb.1.1700000000000.browser"}, 60,
+        )
+        self.assertFalse(self.register(start=token))
+        self.assertEqual(self.rows(
+            "SELECT meta_source_id, meta_visit_id, meta_fbp FROM user_bot",
+        ), [("other_campaign", meta_store.digest(token), "fb.1.1700000000000.browser")])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
+
+    def test_existing_matching_user_receives_visit_columns_without_new_event(self):
+        self.rows(
+            "INSERT INTO user_bot (chat_id, meta_source_id) VALUES (1, %s) RETURNING chat_id",
+            (SETTINGS.source,),
+        )
+        token = "mv_" + "g" * 32
+        meta_store.create_visit(
+            token, SETTINGS.source, SETTINGS.pixel,
+            {"client_user_agent": "known-browser"}, 60,
+        )
+        self.assertFalse(self.register(start=token))
+        self.assertEqual(self.rows(
+            "SELECT meta_source_id, meta_visit_id, meta_client_user_agent FROM user_bot",
+        ), [(SETTINGS.source, meta_store.digest(token), "known-browser")])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
+
+    def test_cookie_fbc_enriches_only_when_initial_visit_has_no_fbc(self):
+        for token, initial in [
+            ("mv_" + "e" * 32, {}),
+            ("mv_" + "f" * 32, {"fbc": "fb.1.1700000000000.current_click"}),
+        ]:
+            meta_store.create_visit(token, SETTINGS.source, SETTINGS.pixel, initial, 60)
+            meta_store.enrich_visit(token, {"fbc": "fb.1.1700000000000.cookie"})
+            data = self.rows(
+                "SELECT user_data FROM meta_bot_visits WHERE token_hash = %s",
+                (meta_store.digest(token),),
+            )[0][0]
+            self.assertEqual(data["fbc"], initial.get("fbc", "fb.1.1700000000000.cookie"))
+
     def test_event_failure_rolls_back_visit_consumption_but_keeps_user(self):
         token = "mv_" + "c" * 32
         meta_store.create_visit(token, SETTINGS.source, SETTINGS.pixel, {}, 60)
@@ -585,6 +680,9 @@ class MetaPostgresTests(unittest.TestCase):
             with self.assertLogs("core.meta_store", level="WARNING"):
                 self.assertFalse(self.register(start=token))
             self.assertEqual(self.rows("SELECT meta_source_id FROM user_bot"), [(None,)])
+            self.assertEqual(self.rows(
+                "SELECT meta_visit_id, meta_fbp, meta_visit_at FROM user_bot",
+            ), [(None, None, None)])
             self.assertEqual(self.rows(
                 "SELECT consumed_at, consumed_by FROM meta_bot_visits",
             ), [(None, None)])

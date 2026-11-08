@@ -1,4 +1,4 @@
-"""An invisible tracking/redirect page on the bot's existing Flask server."""
+"""A subscription page on the bot's existing Flask server."""
 
 import logging
 import secrets
@@ -34,11 +34,14 @@ def redirect_to_bot():
     pixel = ""
     target = BOT_URL
     visit_token = ""
+    # Navigation and attribution collection are separate. Opting out of
+    # browser collection must not silently remove the button's start source.
+    if current.source_valid:
+        target = TELEGRAM_CAMPAIGN_URL_TEMPLATE.format(
+            META_ATTRIBUTION_ID=current.source,
+        )
     if current.enabled and not privacy_opt_out(request):
         if current.source_valid:
-            target = TELEGRAM_CAMPAIGN_URL_TEMPLATE.format(
-                META_ATTRIBUTION_ID=current.source,
-            )
             try:
                 # 192 random bits; the raw bearer token exists only in the
                 # response/deep link, never in database storage or logs.
@@ -72,7 +75,7 @@ def capture_browser_cookies():
     # A same-origin beacon with JSON body is not a public cross-origin collector.
     # No CORS access, no query-string tokens and no arbitrary identifying fields.
     if (
-        not current.ready or privacy_opt_out(request)
+        not current.enabled or not current.source_valid or privacy_opt_out(request)
         or request.headers.get("Sec-Fetch-Site") == "cross-site"
         or (
             request.headers.get("Origin")
@@ -89,8 +92,8 @@ def capture_browser_cookies():
     if not isinstance(token, str) or not VISIT_PATTERN.fullmatch(token):
         return Response(status=400)
     data = browser_cookies(values)
-    # Prefer the current click ID's fbc over a stale fbc from a previous visit.
-    data.pop("fbc", None)
+    # The store preserves an initial fbclid-derived fbc over a stale cookie,
+    # but accepts Pixel's fbc when the initial request had no click identifier.
     if data:
         try:
             meta_store.enrich_visit(token, data)
