@@ -21,7 +21,10 @@ import requests
 from flask import Flask
 
 from core import meta_store
-from handlers.meta_redirect import meta_redirect
+from handlers.meta_redirect import (
+    TELEGRAM_CAMPAIGN_URL_TEMPLATE,
+    meta_redirect,
+)
 from services import meta_tracking as tracking
 
 
@@ -55,13 +58,18 @@ class MetaRedirectTests(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(response.headers["X-Robots-Tag"], "noindex, nofollow")
         html = response.get_data(as_text=True)
+        self.assertEqual(
+            TELEGRAM_CAMPAIGN_URL_TEMPLATE,
+            "https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}",
+        )
         self.assertIn("}, 800)", html)
         self.assertIn("fbq('track', 'PageView')", html)
         self.assertIn("fbq('trackCustom', 'TelegramClick')", html)
         self.assertNotIn("TelegramBotStart", html)
         self.assertNotIn(SETTINGS.token, html)
         self.assertIn(
-            'const target = "https://t.me/rabahcoupons1bot?start=campaign_test";', html,
+            'const target = "https://t.me/rabahcoupons1bot?start=campaign_test";',
+            html,
         )
         self.assertNotIn("?start=mv_", html)
         self.assertNotIn("sendBeacon", html)

@@ -13,6 +13,9 @@ from services.meta_tracking import (
 
 logger = logging.getLogger(__name__)
 meta_redirect = Blueprint("meta_redirect", __name__, template_folder="../templates")
+TELEGRAM_CAMPAIGN_URL_TEMPLATE = (
+    "https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}"
+)
 
 
 @meta_redirect.after_request
@@ -31,7 +34,9 @@ def redirect_to_bot():
     target = BOT_URL
     if current.enabled and not privacy_opt_out(request):
         if current.source_valid:
-            target += f"?start={current.source}"
+            target = TELEGRAM_CAMPAIGN_URL_TEMPLATE.format(
+                META_ATTRIBUTION_ID=current.source,
+            )
         if current.browser_ready:
             pixel = current.pixel
         if not current.source_valid or not current.browser_ready:
