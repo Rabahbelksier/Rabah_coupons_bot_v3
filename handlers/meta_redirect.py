@@ -1,13 +1,14 @@
 """An invisible tracking/redirect page on the bot's existing Flask server."""
 
 import logging
+import secrets
 from urllib.parse import urlsplit
 
 from flask import Blueprint, Response, render_template, request
 
 from core import meta_store
 from services.meta_tracking import (
-    BOT_URL, VISIT_PATTERN, browser_cookies, privacy_opt_out,
+    BOT_URL, VISIT_PATTERN, browser_cookies, privacy_opt_out, request_user_data,
     settings,
 )
 
@@ -32,17 +33,35 @@ def redirect_to_bot():
     current = settings()
     pixel = ""
     target = BOT_URL
+    visit_token = ""
     if current.enabled and not privacy_opt_out(request):
         if current.source_valid:
             target = TELEGRAM_CAMPAIGN_URL_TEMPLATE.format(
                 META_ATTRIBUTION_ID=current.source,
             )
+            try:
+                # 192 random bits; the raw bearer token exists only in the
+                # response/deep link, never in database storage or logs.
+                candidate = "mv_" + secrets.token_urlsafe(24)
+                meta_store.create_visit(
+                    candidate, current.source, current.pixel,
+                    request_user_data(request, current), current.ttl,
+                )
+                visit_token = candidate
+                target = f"{BOT_URL}?start={candidate}"
+            except Exception as error:
+                # Preserve the direct campaign link if optional visit storage
+                # is unavailable; ordinary bot onboarding must still work.
+                logger.warning(
+                    "Meta visit storage unavailable; using campaign link "
+                    "(error_type=%s)", type(error).__name__,
+                )
         if current.browser_ready:
             pixel = current.pixel
         if not current.source_valid or not current.browser_ready:
             logger.warning("Meta redirect configuration is incomplete")
     response = Response(render_template(
-        "meta_redirect.html", target=target, pixel=pixel,
+        "meta_redirect.html", target=target, pixel=pixel, visit_token=visit_token,
     ), mimetype="text/html")
     return response
 

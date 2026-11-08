@@ -9,7 +9,36 @@
 <body>
   <script>
     window.setTimeout(function () {
+      {% if visit_token %}
+      var redirected = false;
+      function goToTelegram() {
+        if (redirected) return;
+        redirected = true;
+        window.location.replace({{ target | tojson }});
+      }
+      // Capture cookies created by Pixel, but never let enrichment block
+      // opening Telegram. The server already captured the initial request.
+      window.setTimeout(goToTelegram, 250);
+      try {
+        var data = {token: {{ visit_token | tojson }}};
+        document.cookie.split(';').forEach(function (item) {
+          var parts = item.trim().split('=');
+          if (parts[0] === '_fbp') data.fbp = parts.slice(1).join('=');
+          if (parts[0] === '_fbc') data.fbc = parts.slice(1).join('=');
+        });
+        fetch('/bot/visit', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          keepalive: true,
+          body: JSON.stringify(data)
+        }).then(goToTelegram, goToTelegram);
+      } catch (error) {
+        goToTelegram();
+      }
+      {% else %}
       window.location.replace({{ target | tojson }});
+      {% endif %}
     }, 800);
 
     {% if pixel %}

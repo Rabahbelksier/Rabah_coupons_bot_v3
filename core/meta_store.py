@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS meta_bot_visits (
 );
 CREATE INDEX IF NOT EXISTS meta_bot_visits_expiry
     ON meta_bot_visits (expires_at);
+ALTER TABLE meta_bot_visits ADD COLUMN IF NOT EXISTS consumed_by TEXT;
 CREATE TABLE IF NOT EXISTS meta_bot_events (
     event_id TEXT PRIMARY KEY,
     user_key TEXT NOT NULL UNIQUE,
@@ -134,6 +135,38 @@ def _save_source_and_event(cursor, chat_id, attribution):
     previous_source = cursor.fetchone()[0]
     source = attribution["source"]
     payload = attribution["start"]
+    browser_data = {}
+    token = attribution.get("visit_token")
+    if token:
+        user_key = digest(f"telegram:rabahcoupons1bot:{chat_id}")
+        cursor.execute(
+            """
+            SELECT source_id, pixel_id, user_data FROM meta_bot_visits
+            WHERE token_hash = %s AND expires_at > CURRENT_TIMESTAMP
+              AND (consumed_at IS NULL OR consumed_by = %s)
+            FOR UPDATE
+            """,
+            (digest(token), user_key),
+        )
+        visit = cursor.fetchone()
+        if visit is None:
+            # Unknown, expired and another account's tokens are not sources.
+            return False
+        payload, visit_pixel, browser_data = visit
+        cursor.execute(
+            """
+            UPDATE meta_bot_visits
+            SET consumed_at = COALESCE(consumed_at, CURRENT_TIMESTAMP),
+                consumed_by = %s
+            WHERE token_hash = %s
+            """,
+            (user_key, digest(token)),
+        )
+        attribution = {
+            **attribution,
+            "eligible": attribution.get("eligible", True)
+            and visit_pixel == attribution["pixel"],
+        }
     if not payload:
         return False
     cursor.execute(
@@ -146,15 +179,21 @@ def _save_source_and_event(cursor, chat_id, attribution):
     ):
         return False
 
-    # Never invent email/phone or infer a browser visit from a shared source.
+    # Only an exact, unexpired bearer token may link browser matching data.
     user_key = digest(f"telegram:rabahcoupons1bot:{chat_id}")
+    user_data = {
+        key: value for key, value in browser_data.items()
+        if key in ("fbp", "fbc", "client_ip_address", "client_user_agent")
+        and isinstance(value, str)
+    }
+    user_data["external_id"] = [user_key]
     body = {
         "data": [{
             "event_name": "TelegramBotStart",
             "event_time": attribution["event_time"],
             "event_id": f"tbs_{user_key}",
             "action_source": "chat",
-            "user_data": {"external_id": [user_key]},
+            "user_data": user_data,
         }],
     }
     if attribution["test_code"]:

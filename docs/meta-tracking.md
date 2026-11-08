@@ -26,41 +26,61 @@ the application.
 | --- | --- |
 | `META_TRACKING_ENABLED` | Defaults to `false`. Set `true` only after the configuration and privacy requirements below are satisfied. |
 | `META_PIXEL_ID` | Numeric pixel/dataset ID used by both the page and the CAPI sender. |
-| `META_ATTRIBUTION_ID` | Fixed campaign source, 1–64 characters from `A-Z a-z 0-9 _ -`. The redirect substitutes this exact value in `start`. |
+| `META_ATTRIBUTION_ID` | Campaign source, 1–64 characters from `A-Z a-z 0-9 _ -`. Stored with each visit and ultimately in `user_bot.meta_source_id`, not exposed as the visit token. |
 | `META_CAPI_ACCESS_TOKEN` | Secret, server-only Conversions API token. Never put it in HTML or a URL. |
 | `META_TEST_EVENT_CODE` | Optional Events Manager test code. Remove for real conversion delivery. |
 | `META_GRAPH_API_VERSION` | Defaults to `v25.0`. Review against Meta's supported Graph API versions when upgrading. |
-| `META_VISIT_TTL_SECONDS`, `META_TRUSTED_PROXY_HOPS` | Legacy visit-capture settings. The fixed-source redirect no longer creates visit records or attaches browser data to bot events. |
+| `META_VISIT_TTL_SECONDS` | Visit-token lifetime, default 86400 seconds, capped at seven days. Expired visits cannot attribute a start. |
+| `META_TRUSTED_PROXY_HOPS` | Default 0. Trust forwarded IPs only after verifying the deployment's proxy contract; otherwise the request's direct remote address is used. |
 
 Existing bot credentials and external PostgreSQL settings remain necessary.
 Startup adds a nullable `meta_source_id` to `user_bot` and the separate tracking
 tables. It does not replace the existing database or rewrite existing users.
 
-When enabled, `/bot` uses the configured source even if CAPI credentials or
-the database are unavailable. Browser events need only the enabled switch and
-valid pixel ID; they do not depend on CAPI readiness. Disabled tracking and
-privacy opt-outs still use the ordinary bot link without Pixel initialization.
+When enabled, `/bot` creates a visit containing the configured source even if
+CAPI credentials are unavailable. If visit storage fails, it falls back to the
+direct campaign link so onboarding still works without browser matching.
+Browser events need only the enabled switch and valid pixel ID; they do not
+depend on CAPI readiness. Disabled tracking and privacy opt-outs still use the
+ordinary bot link without Pixel initialization or visit collection.
 
-## Literal source links and saving
+## Visit links, direct sources and saving
 
-The redirect is exactly:
+For an eligible tracked visit, the redirect is:
 
-`https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}`
+`https://t.me/rabahcoupons1bot?start=mv_<32 random URL-safe characters>`
 
-For example, configuring `fbads` produces `?start=fbads`, never a random visit
-token. The source identifies a campaign, not an individual browser visit.
+Each request gets a fresh 192-bit bearer token. Only its SHA-256 digest is
+stored in `meta_bot_visits`, alongside the campaign source, pixel, bounded
+matching data and expiration. The raw token contains no browser or Telegram
+identity. Treat a copied visit URL as a bearer capability; do not share it.
 
-On receipt of a valid `/start SOURCE`, a database transaction:
+The initial request captures valid `_fbp`/`_fbc`, a valid `fbclid` converted to
+`fbc`, request IP under the configured proxy policy, and bounded user-agent.
+Before redirecting, the page sends a same-origin request with Pixel cookies.
+This enrichment waits at most 250 ms beyond the 800 ms redirect timer; blocked,
+failed or stalled JavaScript requests never prevent opening Telegram.
+
+On receipt of a `/start mv_...`, a database transaction:
 
 1. Creates the bot user if absent, or locks the existing user's row.
-2. Reads the previously saved `meta_source_id`, then saves the received source
-   literally, including a source different from `META_ATTRIBUTION_ID`.
-3. Creates a conversion only if the received source matches the configured
+2. Locks the exact unexpired visit. The first account claims it; repeated starts
+   by the same account are idempotent, and another account cannot reuse it.
+3. Saves the visit's original campaign source in `meta_source_id`, **not** the
+   random token. Unknown, expired or another account's tokens do not overwrite
+   an existing source or prevent basic user registration.
+4. Creates a conversion only if the resolved source matches the configured
    campaign, tracking/CAPI are ready, and the previous saved value was not
-   already that campaign source.
-4. Uses a unique durable user receipt to prevent a second event, even if the
+   already that campaign source. The visit pixel must also match the current
+   pixel. Only this exact visit's matching data may accompany the event.
+5. Uses a unique durable user receipt to prevent a second event, even if the
    source changes away and back, commands arrive concurrently, or the user row
    is subsequently removed.
+
+Direct links such as `?start=fbads` still work: a valid non-visit source is
+saved literally, including nonmatching sources, but no browser visit is guessed.
+The `mv_` prefix followed by exactly 32 URL-safe characters is reserved for visit
+tokens. Browser data is never matched using IP or timing.
 
 Existing users with an empty or different source are eligible under the user's
 clarified rule. A nonmatching source is saved without an event. A later valid
@@ -69,7 +89,7 @@ Source capture does not depend on Meta being enabled or its token being valid.
 If the matching source was saved while delivery was disabled, repeating it
 after enabling delivery does not retroactively create an event.
 
-Saving the source and queuing its event are atomic inside a savepoint, separate
+Claiming a visit, saving the source and queuing its event are atomic inside a savepoint, separate
 from the basic bot-user insert. If optional source/event work fails, only those
 changes are rolled back: basic registration remains, and a subsequent start can
 retry tracking without a saved campaign value incorrectly suppressing it.
@@ -101,16 +121,18 @@ links do not carry browser consent state; enabling that campaign requires a
 lawful basis for the bot event itself as well.
 
 The browser Pixel sends its own page/click matching data, subject to browser
-restrictions and consent. A shared fixed `start` source cannot identify which
-browser visit belongs to which Telegram account. Consequently the bot event
-contains only a SHA-256-hashed, namespaced Telegram ID as `external_id`; it does
+restrictions and consent. A redeemed visit token additionally supplies its
+validated `fbp`, `fbc`, IP and user-agent to the bot event, together with a
+SHA-256-hashed, namespaced Telegram ID as `external_id`. A direct shared campaign
+link supplies only that hashed external ID. The integration does
 not attach a browser's IP, fbp or fbc by guessing from timing or IP addresses.
 This limits matching quality and does not guarantee Meta can match a person.
 Email, phone and unverified Telegram display names are not invented or sent.
 
-New redirect pages no longer create server-side visit records or send cookie
-enrichment beacons. Legacy visit records are retained only until their existing
-expiry and deleted by hourly maintenance; they are not used for new bot events.
+Visit records retain bounded browser matching data and a hashed account claim
+until their expiration, then hourly maintenance deletes them. After a visit is
+claimed, browser enrichment cannot change it. Expired tokens cannot create an
+attribution even before maintenance physically deletes their records.
 Delivery payloads are erased upon successful delivery or permanent failure,
 and pending payloads expire after six days (before Meta's seven-day event-age
 limit). Maintenance continues when tracking is disabled, provided the bot
@@ -166,6 +188,9 @@ not Meta's special Messenger/WhatsApp business-messaging API.
    using a real test ad click if `fbclid` matching is being checked. Do not
    fabricate `fbclid`. In the browser, verify `PageView` and `TelegramClick`
    with Meta's browser tools; these browser events do not use the CAPI test code.
+   Confirm the Telegram link contains a fresh `start=mv_...` token, and that
+   `meta_bot_visits` stores only its hash with the configured source. A privacy
+   opt-out intentionally uses the ordinary link without creating a visit.
 4. Use a test Telegram account without a previously saved matching source or
    prior conversion to press Start. An existing account with an empty/different
    source is eligible. Verify `TelegramBotStart` under Test Events with

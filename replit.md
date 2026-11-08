@@ -107,15 +107,22 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - The existing Flask server serves `/bot`; no separate website process is needed.
 - Tracking is off by default. `META_TRACKING_ENABLED=true` requires a configured
   `META_PIXEL_ID`, `META_ATTRIBUTION_ID`, `META_CAPI_ACCESS_TOKEN` and database.
-- The page sends browser `PageView` and custom `TelegramClick`, then redirects
-  after 800 ms to `https://t.me/rabahcoupons1bot?start={META_ATTRIBUTION_ID}`,
-  substituting the configured source literally, not a visit token.
-- Every valid `/start SOURCE` saves that source in `user_bot.meta_source_id`,
+- The page stores a short-lived visit with the configured campaign source and
+  available browser matching data, sends `PageView` and `TelegramClick`, then
+  redirects to `https://t.me/rabahcoupons1bot?start=mv_<random token>`.
+  Only a token hash is stored. Cookie enrichment cannot delay navigation by
+  more than 250 ms beyond the original 800 ms timer.
+- A visit `/start` resolves and claims that visit for one account, saves the
+  original campaign in `user_bot.meta_source_id` (never the token), and can
+  attach only that visit's browser matching data. Unknown/expired/reused tokens
+  leave attribution unchanged; basic bot registration still works.
+- Direct valid `/start SOURCE` links still save that source,
   including nonmatching sources and existing users. Only a matching source can
   queue `TelegramBotStart` (`action_source=chat`); a previously saved matching
   source or existing durable event receipt prevents a duplicate event.
-- A shared campaign payload cannot reliably link a bot account to its browser
-  visit; browser identifiers are not guessed or attached to the bot event.
+- Shared direct campaign links cannot identify a browser visit; do not guess
+  browser matching data from IP or timing. A failed visit write falls back to
+  the direct campaign URL, without browser data.
 - The optional `META_TEST_EVENT_CODE` applies to newly queued CAPI test events.
   All settings, privacy prerequisites, retention and rollout instructions are
   documented in `docs/meta-tracking.md`.

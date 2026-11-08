@@ -64,7 +64,7 @@ def start_attribution(args, event_time=None):
     payload = args[0] if isinstance(args, (list, tuple)) and len(args) == 1 else ""
     if not isinstance(payload, str) or not START_PATTERN.fullmatch(payload):
         return None
-    return {
+    attribution = {
         "source": current.source,
         "pixel": current.pixel,
         "start": payload,
@@ -73,6 +73,9 @@ def start_attribution(args, event_time=None):
         # Capturing a source must not depend on Meta credentials/readiness.
         "eligible": current.ready,
     }
+    if VISIT_PATTERN.fullmatch(payload):
+        attribution["visit_token"] = payload
+    return attribution
 
 
 def browser_cookies(values):
