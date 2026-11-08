@@ -1,13 +1,15 @@
 """PostgreSQL persistence for visit attribution and durable conversion delivery.
 
-All registration decisions and the outbox insert share one transaction. The
-existing user primary key arbitrates concurrent /start deliveries.
+Source capture and the outbox insert share a savepoint. Optional tracking
+failures must not roll back the basic bot-user insert.
 """
 
 import hashlib
 import json
+import logging
 from contextlib import contextmanager
 
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 ALTER TABLE user_bot ADD COLUMN IF NOT EXISTS meta_source_id TEXT;
@@ -94,7 +96,7 @@ def enrich_visit(token, user_data):
 
 
 def register_start(chat_id, first_name, last_name, attribution):
-    """Save any received source; queue at most one matching conversion."""
+    """Keep registration even if optional source/outbox work fails."""
     with transaction() as cursor:
         cursor.execute(
             """
@@ -106,55 +108,66 @@ def register_start(chat_id, first_name, last_name, attribution):
             """,
             (chat_id, first_name, last_name),
         )
-        # Existing users with an empty/different source are eligible too.
-        # Lock before reading/updating to serialize concurrent start commands.
-        cursor.execute(
-            "SELECT meta_source_id FROM user_bot WHERE chat_id = %s FOR UPDATE",
-            (chat_id,),
-        )
-        previous_source = cursor.fetchone()[0]
-        source = attribution["source"]
-        payload = attribution["start"]
-        if not payload:
-            return False
-        cursor.execute(
-            "UPDATE user_bot SET meta_source_id = %s WHERE chat_id = %s",
-            (payload, chat_id),
-        )
-        if (
-            payload != source or previous_source == source
-            or not attribution.get("eligible", True)
-        ):
-            return False
+        cursor.execute("SAVEPOINT meta_source_and_event")
+        try:
+            queued = _save_source_and_event(cursor, chat_id, attribution)
+        except Exception as error:
+            cursor.execute("ROLLBACK TO SAVEPOINT meta_source_and_event")
+            # Error bodies can contain SQL row values or credentials. Only
+            # safe diagnostic identifiers belong in the console.
+            logger.warning(
+                "Meta attribution failed; basic user registration retained "
+                "(error_type=%s, sqlstate=%s)",
+                type(error).__name__, getattr(error, "pgcode", None),
+            )
+            queued = False
+        cursor.execute("RELEASE SAVEPOINT meta_source_and_event")
+        return queued
 
-        # Names are neither verified nor necessary. Never invent email/phone or
-        # send Telegram IDs as Facebook login IDs. Hash a namespaced external ID.
-        user_key = digest(f"telegram:rabahcoupons1bot:{chat_id}")
-        # A shared campaign payload cannot identify a browser visit. Never
-        # attach a stranger's IP/cookies by guessing from timing or IP address.
-        user_data = {"external_id": [user_key]}
-        body = {
-            "data": [{
-                "event_name": "TelegramBotStart",
-                "event_time": attribution["event_time"],
-                "event_id": f"tbs_{user_key}",
-                "action_source": "chat",
-                "user_data": user_data,
-            }],
-        }
-        if attribution["test_code"]:
-            body["test_event_code"] = attribution["test_code"]
-        cursor.execute(
-            """
-            INSERT INTO meta_bot_events (event_id, user_key, pixel_id, body)
-            VALUES (%s, %s, %s, %s::jsonb)
-            ON CONFLICT (user_key) DO NOTHING RETURNING event_id
-            """,
-            (f"tbs_{user_key}", user_key, attribution["pixel"], json.dumps(body)),
-        )
-        if cursor.fetchone() is None:
-            return False
-        return True
+
+def _save_source_and_event(cursor, chat_id, attribution):
+    # Lock before reading/updating to serialize concurrent start commands.
+    cursor.execute(
+        "SELECT meta_source_id FROM user_bot WHERE chat_id = %s FOR UPDATE",
+        (chat_id,),
+    )
+    previous_source = cursor.fetchone()[0]
+    source = attribution["source"]
+    payload = attribution["start"]
+    if not payload:
+        return False
+    cursor.execute(
+        "UPDATE user_bot SET meta_source_id = %s WHERE chat_id = %s",
+        (payload, chat_id),
+    )
+    if (
+        payload != source or previous_source == source
+        or not attribution.get("eligible", True)
+    ):
+        return False
+
+    # Never invent email/phone or infer a browser visit from a shared source.
+    user_key = digest(f"telegram:rabahcoupons1bot:{chat_id}")
+    body = {
+        "data": [{
+            "event_name": "TelegramBotStart",
+            "event_time": attribution["event_time"],
+            "event_id": f"tbs_{user_key}",
+            "action_source": "chat",
+            "user_data": {"external_id": [user_key]},
+        }],
+    }
+    if attribution["test_code"]:
+        body["test_event_code"] = attribution["test_code"]
+    cursor.execute(
+        """
+        INSERT INTO meta_bot_events (event_id, user_key, pixel_id, body)
+        VALUES (%s, %s, %s, %s::jsonb)
+        ON CONFLICT (user_key) DO NOTHING RETURNING event_id
+        """,
+        (f"tbs_{user_key}", user_key, attribution["pixel"], json.dumps(body)),
+    )
+    return cursor.fetchone() is not None
 
 
 def claim_event(lease_id):

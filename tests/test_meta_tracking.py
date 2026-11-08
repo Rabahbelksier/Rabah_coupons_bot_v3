@@ -432,20 +432,76 @@ class MetaPostgresTests(unittest.TestCase):
         self.assertEqual(results.count(True), 1)
         self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(1,)])
 
-    def test_transaction_rolls_back_registration_when_outbox_fails(self):
+    def test_outbox_failure_keeps_basic_registration_and_allows_tracking_retry(self):
+        self.rows(
+            "INSERT INTO user_bot (chat_id, meta_source_id) VALUES (2, %s) RETURNING chat_id",
+            ("previous_source",),
+        )
         with meta_store.transaction() as cursor:
             cursor.execute("""
                 ALTER TABLE meta_bot_events ADD CONSTRAINT forced_failure
                 CHECK (pixel_id != '123456789')
             """)
         try:
-            with self.assertRaises(psycopg2.errors.CheckViolation):
-                self.register()
-            self.assertEqual(self.rows("SELECT COUNT(*) FROM user_bot"), [(0,)])
+            with self.assertLogs("core.meta_store", level="WARNING") as logs:
+                self.assertFalse(self.register())
+                self.assertFalse(self.register(2))
+            self.assertIn("CheckViolation", " ".join(logs.output))
+            self.assertIn("23514", " ".join(logs.output))
+            self.assertNotIn("123456789", " ".join(logs.output))
+            self.assertEqual(self.rows(
+                "SELECT chat_id, meta_source_id FROM user_bot ORDER BY chat_id",
+            ), [(1, None), (2, "previous_source")])
+            self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
         finally:
             with meta_store.transaction() as cursor:
                 cursor.execute("ALTER TABLE meta_bot_events DROP CONSTRAINT forced_failure")
         self.assertTrue(self.register())
+        self.assertTrue(self.register(2))
+
+    def test_missing_source_column_does_not_remove_basic_user(self):
+        with meta_store.transaction() as cursor:
+            cursor.execute(
+                "ALTER TABLE user_bot RENAME COLUMN meta_source_id TO unavailable_source"
+            )
+        try:
+            with self.assertLogs("core.meta_store", level="WARNING") as logs:
+                self.assertFalse(self.register())
+            self.assertIn("UndefinedColumn", " ".join(logs.output))
+            self.assertEqual(self.rows("SELECT chat_id FROM user_bot"), [(1,)])
+        finally:
+            with meta_store.transaction() as cursor:
+                cursor.execute(
+                    "ALTER TABLE user_bot RENAME COLUMN unavailable_source TO meta_source_id"
+                )
+        self.assertTrue(self.register())
+
+    def test_tracking_connection_failure_falls_back_to_basic_registration(self):
+        from core import db
+        with (
+            patch.object(db, "DATABASE_URL", "offline-test"),
+            patch.object(db, "get_db_connection", side_effect=lambda **_: self.factory()),
+            patch.object(meta_store, "register_start", side_effect=psycopg2.OperationalError(
+                "sensitive connection details must not be logged"
+            )),
+            self.assertLogs("core.db", level="WARNING") as logs,
+        ):
+            db.save_user(1, "Test", "", meta_start=self.attribution)
+        self.assertEqual(self.rows("SELECT chat_id FROM user_bot"), [(1,)])
+        self.assertNotIn("sensitive connection", " ".join(logs.output))
+        self.assertTrue(self.register())
+
+    def test_plain_start_registration_does_not_depend_on_tracking(self):
+        from core import db
+        with (
+            patch.object(db, "DATABASE_URL", "offline-test"),
+            patch.object(db, "get_db_connection", side_effect=self.factory),
+        ):
+            db.save_user(1, "Test", "")
+        self.assertEqual(self.rows(
+            "SELECT chat_id, meta_source_id FROM user_bot",
+        ), [(1, None)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM meta_bot_events"), [(0,)])
 
     def test_lease_recovery_retry_and_terminal_payload_purge(self):
         self.register()

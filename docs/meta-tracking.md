@@ -69,9 +69,18 @@ Source capture does not depend on Meta being enabled or its token being valid.
 If the matching source was saved while delivery was disabled, repeating it
 after enabling delivery does not retroactively create an event.
 
-Saving the source and queuing its event are atomic. On a database failure they
-roll back together, and the bot still sends its existing reply. A subsequent
-start can retry. No historical users are bulk-updated by this change.
+Saving the source and queuing its event are atomic inside a savepoint, separate
+from the basic bot-user insert. If optional source/event work fails, only those
+changes are rolled back: basic registration remains, and a subsequent start can
+retry tracking without a saved campaign value incorrectly suppressing it.
+If the tracking connection itself fails, ordinary registration is retried on a
+separate connection. An outage affecting the entire database can still prevent
+registration; this is not hidden as a successful write.
+The bot's existing replies stay unchanged. No historical users are bulk-updated.
+
+Console-only `/start` diagnostics show whether the handler was entered and
+whether a Meta event was queued. Tracking persistence failures log only their
+exception type and SQLSTATE, not tokens, names, chat IDs or SQL row values.
 
 A direct campaign link follows the same registration rules but generates no
 `PageView` or `TelegramClick` because `/bot` was not opened.

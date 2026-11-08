@@ -3092,13 +3092,20 @@ def save_user(chat_id, first_name, last_name, *, meta_start=None):
         from core.meta_store import register_start
         try:
             return register_start(chat_id, first_name, last_name, meta_start)
-        except Exception:
-            # Keep source capture and its event atomic. A later /start can
-            # retry after an outage without losing the source or its event.
-            logger.warning("User registration with Meta attribution unavailable")
-            return False
+        except Exception as error:
+            # A tracking connection/schema failure must not suppress ordinary
+            # registration. Existing users with no source can retry tracking.
+            logger.warning(
+                "Meta registration path unavailable; retrying basic registration "
+                "(error_type=%s, sqlstate=%s)",
+                type(error).__name__, getattr(error, "pgcode", None),
+            )
+    conn = None
     try:
-        conn = get_db_connection()
+        conn = (
+            get_db_connection(connect_timeout=3)
+            if meta_start is not None else get_db_connection()
+        )
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO user_bot (
@@ -3110,9 +3117,13 @@ def save_user(chat_id, first_name, last_name, *, meta_start=None):
         """, (chat_id, first_name, last_name))
         conn.commit()
         cur.close()
-        conn.close()
     except Exception as e:
+        if conn:
+            conn.rollback()
         logger.error(f"Error saving user: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def record_user_activity(chat_id, first_name="", last_name=""):

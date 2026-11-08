@@ -34,14 +34,22 @@ def start_keyboard():
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(
+        "Telegram /start handler entered (has_payload=%s)",
+        bool(getattr(context, "args", None)),
+    )
     _clear_ai_search_state(context)
     user = update.effective_user
     message_date = getattr(update.message, "date", None)
     event_time = message_date.timestamp() if hasattr(message_date, "timestamp") else None
     attribution = start_attribution(getattr(context, "args", None), event_time)
     kwargs = {"meta_start": attribution} if attribution is not None else {}
-    await asyncio.to_thread(
+    meta_event_queued = await asyncio.to_thread(
         save_user, user.id, user.first_name, user.last_name or '', **kwargs,
+    )
+    logger.info(
+        "Telegram /start persistence returned (meta_event_queued=%s)",
+        meta_event_queued is True,
     )
     await update.message.reply_text(
         START_TEXT,
