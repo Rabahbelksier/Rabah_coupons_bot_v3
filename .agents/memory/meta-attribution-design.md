@@ -11,4 +11,8 @@ Save a received source for existing users too, even if their previous source is 
 
 **Why:** The user explicitly confirmed this rule when asked about existing users with an empty source.
 
+Keep `/bot` as an automatic redirect, not a page requiring a navigation button.
+
+**Why:** The user explicitly chose “الإبقاء على التحويل التلقائي” when offered a direct-click button to address the native Telegram handoff.
+
 **How to apply:** Preserve the literal campaign-source deep link in redirect changes. A fixed shared payload cannot reliably identify the originating browser visit; never infer that link from IP or timing. Compare the received source with configuration and check the previously saved value before updating it; suppress a conversion if the campaign source was already saved, and retain durable event deduplication. Plain starts without a source must not erase it. Do not change existing bot posts or messages as part of this work.
