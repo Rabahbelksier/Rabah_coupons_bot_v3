@@ -59,7 +59,8 @@ ADMIN_CALLBACK_PATTERN = (
     r"|admin_broadcast_(?:confirm|cancel)"
     r"|admin_cleanup_(?:confirm|cancel)"
     r"|admin_(?:menu|cart|ai|smart|publish|service|queue|activity|broadcast|cleanup|logs|tools|users)"
-    r"(?:_(?:enable|disable|report|today|month|previous|week|hour|quarter|"
+    r"(?:_(?:enable|disable|report|today|yesterday|thisweek|lastweek|"
+    r"month|previous|week|year|lastyear|all|hour|quarter|"
     r"manual|auto|addbutton|send|back))?"
     r"|admin_logs_file_(?:hour|quarter)"
     r"|admin_(?:edit|add|exit)(?:_[0-9]+)?"
@@ -341,9 +342,47 @@ def activity_keyboard():
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("اليوم", callback_data="admin_activity_today"),
-            InlineKeyboardButton("هذا الشهر", callback_data="admin_activity_month"),
+            InlineKeyboardButton(
+                "البارحة",
+                callback_data="admin_activity_yesterday",
+            ),
         ],
-        [InlineKeyboardButton("الشهر الماضي", callback_data="admin_activity_previous")],
+        [
+            InlineKeyboardButton(
+                "هذا الأسبوع",
+                callback_data="admin_activity_thisweek",
+            ),
+            InlineKeyboardButton(
+                "الأسبوع الماضي",
+                callback_data="admin_activity_lastweek",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "هذا الشهر",
+                callback_data="admin_activity_month",
+            ),
+            InlineKeyboardButton(
+                "الشهر الماضي",
+                callback_data="admin_activity_previous",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "هذا العام",
+                callback_data="admin_activity_year",
+            ),
+            InlineKeyboardButton(
+                "العام الماضي",
+                callback_data="admin_activity_lastyear",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "الكل",
+                callback_data="admin_activity_all",
+            ),
+        ],
         [InlineKeyboardButton("العودة للقائمة", callback_data="admin_menu")],
     ])
 
@@ -1008,15 +1047,35 @@ async def send_activity_menu(message, *, edit=False):
 async def send_activity_report(message, period, *, edit=False):
     labels = {
         "today": "اليوم",
+        "yesterday": "البارحة (اليوم الماضي)",
+        "this_week": "هذا الأسبوع",
+        "last_week": "الأسبوع الماضي",
         "month": "هذا الشهر",
         "previous": "الشهر الماضي",
+        "year": "هذا العام",
+        "last_year": "العام الماضي",
+        "all": "الكل",
     }
     stats = await asyncio.to_thread(get_activity_stats, period)
+    history_note = (
+        "\n\nتنبيه: تفاصيل النشاط اليومي متاحة منذ تفعيل سجل النشاط؛ "
+        "البيانات الأقدم غير متوفرة."
+        if period in {
+            "yesterday",
+            "this_week",
+            "last_week",
+            "year",
+            "last_year",
+            "all",
+        }
+        else ""
+    )
     await _render_admin_message(
         message,
         f"إحصائيات {labels[period]}:\n"
         f"عدد الطلبات: {stats['requests']}\n"
-        f"عدد المستخدمين النشطين: {stats['users']}",
+        f"عدد المستخدمين النشطين: {stats['users']}"
+        f"{history_note}",
         reply_markup=activity_keyboard(),
         edit=edit,
     )
@@ -1596,8 +1655,14 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             period = {
                 "today": "today",
+                "yesterday": "yesterday",
+                "thisweek": "this_week",
+                "lastweek": "last_week",
                 "month": "month",
                 "previous": "previous",
+                "year": "year",
+                "lastyear": "last_year",
+                "all": "all",
             }.get(action_parts[2])
             if period:
                 await send_activity_report(query.message, period, edit=True)

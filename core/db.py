@@ -172,6 +172,7 @@ def init_db():
                 first_name TEXT,
                 last_name TEXT,
                 chat_id BIGINT PRIMARY KEY,
+                first_used_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 requests_today INTEGER NOT NULL DEFAULT 0,
                 requests_this_month INTEGER NOT NULL DEFAULT 0,
                 requests_last_month INTEGER NOT NULL DEFAULT 0,
@@ -191,6 +192,14 @@ def init_db():
                 f"ALTER TABLE IF EXISTS user_bot ADD COLUMN IF NOT EXISTS "
                 f"{column_name} {column_definition[len(column_name) + 1:]}"
             )
+        cur.execute(
+            "ALTER TABLE IF EXISTS user_bot "
+            "ADD COLUMN IF NOT EXISTS first_used_at TIMESTAMPTZ"
+        )
+        cur.execute(
+            "ALTER TABLE user_bot ALTER COLUMN first_used_at "
+            "SET DEFAULT CURRENT_TIMESTAMP"
+        )
         from core.meta_store import SCHEMA as meta_schema
         cur.execute(meta_schema)
         cur.execute("""
@@ -216,6 +225,26 @@ def init_db():
             SET requests_today = 0,
                 activity_day = CURRENT_DATE
             WHERE activity_day < CURRENT_DATE
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_activity_daily (
+                chat_id BIGINT NOT NULL
+                    REFERENCES user_bot(chat_id) ON DELETE CASCADE,
+                activity_day DATE NOT NULL,
+                requests INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, activity_day)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_activity_daily_day
+            ON user_activity_daily (activity_day, chat_id)
+        """)
+        cur.execute("""
+            INSERT INTO user_activity_daily (chat_id, activity_day, requests)
+            SELECT chat_id, activity_day, requests_today
+            FROM user_bot
+            WHERE activity_day = CURRENT_DATE AND requests_today > 0
+            ON CONFLICT (chat_id, activity_day) DO NOTHING
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS bot_error_logs (
@@ -3180,6 +3209,27 @@ def record_user_activity(chat_id, first_name="", last_name=""):
                 """,
                 (chat_id,),
             )
+            cursor.execute(
+                "SAVEPOINT record_daily_user_activity"
+            )
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO user_activity_daily (
+                        chat_id, activity_day, requests
+                    )
+                    VALUES (%s, CURRENT_DATE, 1)
+                    ON CONFLICT (chat_id, activity_day)
+                    DO UPDATE SET requests = user_activity_daily.requests + 1
+                    """,
+                    (chat_id,),
+                )
+            except Exception:
+                cursor.execute("ROLLBACK TO SAVEPOINT record_daily_user_activity")
+                logger.exception(
+                    "Could not record daily activity for user %s",
+                    chat_id,
+                )
         conn.commit()
     except Exception:
         if conn:
@@ -3191,26 +3241,60 @@ def record_user_activity(chat_id, first_name="", last_name=""):
 
 
 def get_activity_stats(period):
-    """Return request and active-user totals for today/current/previous month."""
+    """Return request and active-user totals for a supported period."""
     columns = {
         "today": "requests_today",
         "month": "requests_this_month",
         "previous": "requests_last_month",
     }
     column = columns.get(period)
-    if not column or not DATABASE_URL:
+    daily_periods = {
+        "yesterday": "activity_day = CURRENT_DATE - 1",
+        "this_week": (
+            "activity_day >= date_trunc('week', CURRENT_DATE)::date "
+            "AND activity_day <= CURRENT_DATE"
+        ),
+        "last_week": (
+            "activity_day >= date_trunc('week', CURRENT_DATE)::date - 7 "
+            "AND activity_day < date_trunc('week', CURRENT_DATE)::date"
+        ),
+        "year": (
+            "activity_day >= date_trunc('year', CURRENT_DATE)::date "
+            "AND activity_day <= CURRENT_DATE"
+        ),
+        "last_year": (
+            "activity_day >= "
+            "(date_trunc('year', CURRENT_DATE) - INTERVAL '1 year')::date "
+            "AND activity_day < date_trunc('year', CURRENT_DATE)::date"
+        ),
+        "all": "TRUE",
+    }
+    date_filter = daily_periods.get(period)
+    if (not column and not date_filter) or not DATABASE_URL:
         return {"requests": 0, "users": 0}
     conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT COALESCE(SUM({column}), 0),
-                       COUNT(*) FILTER (WHERE COALESCE({column}, 0) > 0)
-                FROM user_bot
-                """
-            )
+            if column:
+                cursor.execute(
+                    f"""
+                    SELECT COALESCE(SUM({column}), 0),
+                           COUNT(*) FILTER (
+                               WHERE COALESCE({column}, 0) > 0
+                           )
+                    FROM user_bot
+                    """
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    SELECT COALESCE(SUM(requests), 0),
+                           COUNT(DISTINCT chat_id) FILTER (WHERE requests > 0)
+                    FROM user_activity_daily
+                    WHERE {date_filter}
+                    """
+                )
             requests, users = cursor.fetchone()
             return {"requests": int(requests or 0), "users": int(users or 0)}
     finally:

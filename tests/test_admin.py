@@ -35,6 +35,7 @@ from handlers.admin import (
     admin_users_keyboard,
     ai_service_keyboard,
     ai_service_details_keyboard,
+    activity_keyboard,
     format_cart_row,
     feature_toggle_keyboard,
     handle_admin_message,
@@ -169,6 +170,12 @@ class AdminCartTests(unittest.TestCase):
             "admin_menu",
             "admin_ai_disable",
             "admin_activity_month",
+            "admin_activity_yesterday",
+            "admin_activity_thisweek",
+            "admin_activity_lastweek",
+            "admin_activity_year",
+            "admin_activity_lastyear",
+            "admin_activity_all",
             "admin_logs_week",
             "admin_edit_12",
             "admin_add",
@@ -178,6 +185,20 @@ class AdminCartTests(unittest.TestCase):
                 self.assertIsNotNone(
                     re.fullmatch(ADMIN_CALLBACK_PATTERN, callback)
                 )
+
+    def test_activity_keyboard_orders_periods_in_two_button_rows(self):
+        rows = activity_keyboard().inline_keyboard
+        self.assertEqual(
+            [[button.callback_data for button in row] for row in rows],
+            [
+                ["admin_activity_today", "admin_activity_yesterday"],
+                ["admin_activity_thisweek", "admin_activity_lastweek"],
+                ["admin_activity_month", "admin_activity_previous"],
+                ["admin_activity_year", "admin_activity_lastyear"],
+                ["admin_activity_all"],
+                ["admin_menu"],
+            ],
+        )
 
     def test_admin_callback_pattern_accepts_grouped_menu_actions(self):
         for callback in (

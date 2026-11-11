@@ -21,3 +21,4 @@
 - [Automatic publisher limits](automatic-publisher-limits.md) — publish at 5-item thresholds, choose newest regardless of price, and cap each selected offer at two sends per day.
 - [Logging boundaries](logging-scope.md) — Railway diagnostics must preserve all bot logic and user-visible messages, including admin reports.
 - [Meta attribution design](meta-attribution-design.md) — user approved trying visit-token links; save the original campaign source, preserve direct links and conversion deduplication.
+- [User activity history](user-activity-history.md) — extended activity ranges need daily aggregates; never invent old first-use timestamps or pre-tracking history.
