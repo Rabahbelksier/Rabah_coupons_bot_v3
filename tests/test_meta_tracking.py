@@ -13,6 +13,7 @@ import tempfile
 import time
 import unittest
 from dataclasses import replace
+from html.parser import HTMLParser
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -100,6 +101,42 @@ class MetaRedirectTests(unittest.TestCase):
             self.assertIn("?start=campaign_test", html)
             self.assertIn('id="telegram-subscribe"', html)
         self.create.assert_not_called()
+
+    def test_reference_design_social_links_do_not_replace_tracked_bot_button(self):
+        class Links(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.anchors = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "a":
+                    self.anchors.append(dict(attrs))
+
+        html = self.client.get("/bot").get_data(as_text=True)
+        parser = Links()
+        parser.feed(html)
+        primary = [
+            link for link in parser.anchors
+            if link.get("id") == "telegram-subscribe"
+        ]
+        self.assertEqual(len(primary), 1)
+        token = self.create.call_args.args[0]
+        self.assertEqual(
+            primary[0]["href"],
+            f"https://t.me/rabahcoupons1bot?start={token}",
+        )
+        self.assertNotIn("target", primary[0])
+        for href in (
+            "https://www.facebook.com/share/1JfKBBcjCb/",
+            "https://www.facebook.com/share/1FfezX5Hp3/",
+            "https://t.me/rabahcopons",
+        ):
+            matches = [link for link in parser.anchors if link.get("href") == href]
+            self.assertEqual(len(matches), 1)
+            self.assertNotIn("onclick", matches[0])
+            self.assertNotEqual(matches[0].get("id"), "telegram-subscribe")
+        self.assertEqual(html.count("fbq('track', 'PageView')"), 1)
+        self.assertEqual(html.count("fbq('trackCustom', 'TelegramClick')"), 1)
 
     def test_denied_cookie_preserves_source_without_collecting_visit(self):
         self.client.set_cookie("meta_consent", "denied")
