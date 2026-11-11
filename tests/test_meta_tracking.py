@@ -137,6 +137,12 @@ class MetaRedirectTests(unittest.TestCase):
             self.assertNotEqual(matches[0].get("id"), "telegram-subscribe")
         self.assertEqual(html.count("fbq('track', 'PageView')"), 1)
         self.assertEqual(html.count("fbq('trackCustom', 'TelegramClick')"), 1)
+        for event_name in (
+            "Offers365FacebookClick",
+            "RabahCouponsFacebookClick",
+            "TelegramChannelClick",
+        ):
+            self.assertEqual(html.count(f"'{event_name}'"), 1)
 
     def test_denied_cookie_preserves_source_without_collecting_visit(self):
         self.client.set_cookie("meta_consent", "denied")
@@ -185,17 +191,36 @@ const scripts = JSON.parse(process.argv[1]);
 const token = JSON.parse(process.argv[2]);
 (async function() {
   for (const mode of ['ok', 'reject', 'throw', 'hang', 'missing', 'pixel-throws', 'pixel-blocked']) {
-    let timers = [], redirects = [], captured, click, calls = [];
-    const anchor = {
-      href: 'https://t.me/rabahcoupons1bot?start=' + token,
-      addEventListener: (name, fn) => { assert.equal(name, 'click'); click = fn; }
+    let timers = [], redirects = [], captured, calls = [];
+    const listeners = {};
+    const makeAnchor = (id, href) => ({
+      id, href,
+      addEventListener: (name, fn) => {
+        assert.equal(name, 'click');
+        listeners[id] = fn;
+      }
+    });
+    const anchors = {
+      'telegram-subscribe': makeAnchor(
+        'telegram-subscribe',
+        'https://t.me/rabahcoupons1bot?start=' + token
+      ),
+      'offers365-facebook-link': makeAnchor(
+        'offers365-facebook-link', 'https://www.facebook.com/share/1JfKBBcjCb/'
+      ),
+      'rabah-facebook-link': makeAnchor(
+        'rabah-facebook-link', 'https://www.facebook.com/share/1FfezX5Hp3/'
+      ),
+      'rabah-channel-link': makeAnchor(
+        'rabah-channel-link', 'https://t.me/rabahcopons'
+      )
     };
     const ctx = {
       setTimeout: fn => timers.push(fn),
       location: {replace: url => redirects.push(url)},
       document: {
         cookie: '_fbp=fb.1.1700000000000.123; _fbc=fb.1.1700000000000.click',
-        getElementById: id => { assert.equal(id, 'telegram-subscribe'); return anchor; },
+        getElementById: id => anchors[id] || null,
         createElement: () => ({}),
         getElementsByTagName: () => [{parentNode: {insertBefore: () => {}}}]
       }
@@ -218,7 +243,10 @@ const token = JSON.parse(process.argv[2]);
       try { vm.runInContext(source, ctx); }
       catch (error) { if (mode !== 'pixel-throws') throw error; }
     }
-    assert.equal(typeof click, 'function');
+    assert.equal(typeof listeners['telegram-subscribe'], 'function');
+    for (const id of [
+      'offers365-facebook-link', 'rabah-facebook-link', 'rabah-channel-link'
+    ]) assert.equal(typeof listeners[id], 'function');
     const events = () => mode === 'pixel-blocked'
       ? Array.from(ctx.fbq.queue, args => Array.from(args)) : calls;
     assert.equal(events().filter(args => args[1] === 'TelegramClick').length, 0);
@@ -228,13 +256,31 @@ const token = JSON.parse(process.argv[2]);
     timers = [];
     await Promise.resolve();
     assert.deepEqual(redirects, []);
-    click({preventDefault: () => { throw new Error('Native navigation intercepted'); }});
+    listeners['telegram-subscribe']({preventDefault: () => {
+      throw new Error('Native navigation intercepted');
+    }});
     await Promise.resolve();
     assert.deepEqual(redirects, []);
-    assert.equal(anchor.href, 'https://t.me/rabahcoupons1bot?start=' + token);
+    assert.equal(
+      anchors['telegram-subscribe'].href,
+      'https://t.me/rabahcoupons1bot?start=' + token
+    );
     assert.equal(events().filter(args => args[1] === 'TelegramClick').length,
                  mode === 'pixel-throws' ? 0 : 1);
     assert.equal(events().filter(args => args[1] === 'TelegramBotStart').length, 0);
+    for (const [id, eventName] of [
+      ['offers365-facebook-link', 'Offers365FacebookClick'],
+      ['rabah-facebook-link', 'RabahCouponsFacebookClick'],
+      ['rabah-channel-link', 'TelegramChannelClick']
+    ]) {
+      const countBefore = events().length;
+      listeners[id]({preventDefault: () => {
+        throw new Error('Social navigation intercepted');
+      }});
+      assert.equal(events().length, countBefore + (mode === 'pixel-throws' ? 0 : 1));
+      assert.equal(events().filter(args => args[1] === eventName).length,
+                   mode === 'pixel-throws' ? 0 : 1);
+    }
     if (captured) {
       assert.equal(captured.token, token);
       assert.equal(captured.fbp, 'fb.1.1700000000000.123');

@@ -431,7 +431,7 @@
             <span class="social-caption">صفحتنا على فيسبوك</span>
           </span>
         </div>
-        <a class="social-link" href="https://www.facebook.com/share/1JfKBBcjCb/">
+        <a class="social-link" id="offers365-facebook-link" href="https://www.facebook.com/share/1JfKBBcjCb/">
           <span>متابعة الصفحة</span>
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
@@ -446,7 +446,7 @@
             <span class="social-caption">صفحتنا على فيسبوك</span>
           </span>
         </div>
-        <a class="social-link" href="https://www.facebook.com/share/1FfezX5Hp3/">
+        <a class="social-link" id="rabah-facebook-link" href="https://www.facebook.com/share/1FfezX5Hp3/">
           <span>متابعة الصفحة</span>
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
@@ -461,7 +461,7 @@
         <span class="social-name">Rabah coupons</span>
         <span class="social-caption">قناتنا على تلجرام</span>
       </span>
-      <a class="social-link" href="https://t.me/rabahcopons">
+      <a class="social-link" id="rabah-channel-link" href="https://t.me/rabahcopons">
         <span>الانضمام إلى القناة</span>
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
@@ -515,6 +515,24 @@
   {% endif %}
   <script>
     (function () {
+      {% if pixel %}
+      [
+        ['offers365-facebook-link', 'Offers365FacebookClick'],
+        ['rabah-facebook-link', 'RabahCouponsFacebookClick'],
+        ['rabah-channel-link', 'TelegramChannelClick']
+      ].forEach(function (entry) {
+        var link = document.getElementById(entry[0]);
+        if (!link) return;
+        link.addEventListener('click', function () {
+          try {
+            if (typeof window.fbq === 'function') {
+              window.fbq('trackCustom', entry[1]);
+            }
+          } catch (error) {}
+        });
+      });
+      {% endif %}
+
       var subscribeLink = document.getElementById('telegram-subscribe');
       if (!subscribeLink) return;
 
