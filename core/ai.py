@@ -1,4 +1,5 @@
 import hashlib
+from difflib import SequenceMatcher
 import json
 import logging
 import re
@@ -3208,16 +3209,52 @@ def _match_user_categories_in_gemini_cache(
 _SPECIAL_CATEGORY_ACCESSORY_PATTERN = re.compile(
     r"(?:\b(?:case|cover|strap|band|bracelet|ear\s*tips?|"
     r"replacement|accessor(?:y|ies))\b|"
-    r"(?:حافظة|جراب|غطاء|سوار|حزام|رباط|قطع\s+غيار))",
+    r"(?:حافظ[ةت]|جراب|غطاء|سوار|حزام|رباط|قطع\s+غيار))",
     re.IGNORECASE,
 )
+
+_SPECIAL_CATEGORY_ARABIC_WORDS = {
+    "سماعه", "سماعت", "سماعات", "بلوتوث", "بلوثوث",
+    "لاسلكي", "لاسلكيت", "لاسلكيه", "ساعه", "ساعت", "ساعات",
+    "ذكي", "ذكيت", "ذكيه",
+}
+
+
+def _special_category_text(text):
+    """Normalize category wording only; never rewrite product/model identifiers."""
+    words = []
+    for word in _keyword_vocabulary_key(text).split():
+        if re.fullmatch(r"[\u0621-\u064a]+", word):
+            if word.startswith("وال"):
+                word = word[1:]
+            if word.startswith("ال") and len(word) > 4:
+                word = word[2:]
+            if word.startswith("و") and word[1:] in _SPECIAL_CATEGORY_ARABIC_WORDS:
+                word = word[1:]
+            # Correct only a single insertion/deletion/substitution in long
+            # category words, and only when the best correction is unambiguous.
+            if len(word) >= 4 and word not in _SPECIAL_CATEGORY_ARABIC_WORDS:
+                candidates = []
+                for candidate in _SPECIAL_CATEGORY_ARABIC_WORDS:
+                    matcher = SequenceMatcher(None, word, candidate, autojunk=False)
+                    changes = [
+                        (a1 - a0, b1 - b0)
+                        for tag, a0, a1, b0, b1 in matcher.get_opcodes()
+                        if tag != "equal"
+                    ]
+                    if len(changes) == 1 and max(changes[0]) == 1:
+                        candidates.append(candidate)
+                if len(candidates) == 1:
+                    word = candidates[0]
+        words.append(word)
+    return " ".join(words)
 
 
 def _saved_special_categories_in_text(*texts):
     """Find explicit channel-offer categories without treating accessories as them."""
     found = []
     for text in texts:
-        normalized = _keyword_vocabulary_key(text)
+        normalized = _special_category_text(text)
         if not normalized or _SPECIAL_CATEGORY_ACCESSORY_PATTERN.search(normalized):
             continue
         tokens = set(normalized.split())
@@ -3240,14 +3277,15 @@ def _saved_special_categories_in_text(*texts):
             "بلوثوث",
             "لاسلكي",
             "لاسلكيه",
+            "لاسلكيت",
             "wireless",
             "bluetooth",
         }))
         has_smart_watches = bool(
             re.search(
                 r"(?:\bsmart\s*watches?\b|\bsmartwatch(?:es)?\b|"
-                r"\b(?:ساعت|ساعات)\s+ذكي(?:ت|ه)\b|"
-                r"\bذكي(?:ت|ه)\s+(?:ساعت|ساعات)\b)",
+                r"\b(?:ساعه|ساعت|ساعات)\s+ذكي(?:ت|ه)?\b|"
+                r"\bذكي(?:ت|ه)?\s+(?:ساعه|ساعت|ساعات)\b)",
                 normalized,
             )
         )
@@ -3264,25 +3302,25 @@ def _special_category_request_is_broad(text, saved_categories):
     """Distinguish a category-only request from a named model or subtype."""
     tokens = {
         token[1:] if token.startswith("و") and len(token) > 1 else token
-        for token in _keyword_vocabulary_key(text).split()
+        for token in _special_category_text(text).split()
     }
     category_tokens = set()
     if SPECIAL_CATEGORY_BLUETOOTH_HEADPHONES in saved_categories:
         category_tokens.update({
             "سماعه", "سماعت", "سماعات", "headphone", "headphones",
             "earphone", "earphones", "earbud", "earbuds", "headset",
-            "headsets", "tws", "بلوتوث", "بلوثوث", "لاسلكي", "لاسلكيه",
+            "headsets", "tws", "بلوتوث", "بلوثوث", "لاسلكي", "لاسلكيه", "لاسلكيت",
             "wireless", "bluetooth",
         })
     if SPECIAL_CATEGORY_SMART_WATCHES in saved_categories:
         category_tokens.update({
-            "ساعه", "ساعت", "ساعات", "ذكي", "ذكيت", "smart", "watch",
+            "ساعه", "ساعت", "ساعات", "ذكي", "ذكيت", "ذكيه", "smart", "watch",
             "watches", "smartwatch", "smartwatches",
         })
     generic_tokens = {
         token
         for phrase in _GENERIC_REQUEST_WORDS
-        for token in _keyword_vocabulary_key(phrase).split()
+        for token in _special_category_text(phrase).split()
     }
     generic_tokens.update({
         "على", "عن", "في", "من", "الى", "اريد", "ابحث", "اعرض",
@@ -3294,6 +3332,7 @@ def _special_category_request_is_broad(text, saved_categories):
         "الجزائر", "algeria", "france", "ram", "storage", "جيجا",
         "جيجابايت", "غيغا", "تيرا", "gb", "tb", "ذاكرت", "ذاكره", "رام",
     })
+    generic_tokens.update(_special_category_text(" ".join(generic_tokens)).split())
     shipping_country = _extract_shipping_country_from_text(text)
     generic_tokens.update(
         _keyword_vocabulary_key(shipping_country).split()
@@ -3395,6 +3434,12 @@ def parse_user_request(text):
   افهم المعنى من أي صياغة أصلية مكافئة.
 - افهم اختلاف ترتيب الكلمات والتصريف وأدوات التعريف والهمزات والمرادفات
   واللهجات والأخطاء الإملائية الواضحة؛ لا تشترط تطابق كلمات محددة.
+- عندما يكون المعنى طلب فئة الساعات الذكية، استخدم "ساعات ذكية" في
+  canonical_request، وللسماعات اللاسلكية أو البلوتوث استخدم "سماعات بلوتوث".
+  مثلًا "اريد عروض الساعات الذكية" و"عروض ساعات ذكيه" لهما المعنى نفسه.
+  صحح الأخطاء الواضحة بحسب السياق، لكن لا تحول الساعات العادية إلى ذكية،
+  ولا السماعات السلكية إلى بلوتوث، ولا ملحقات المنتج إلى المنتج نفسه.
+  احتفظ باسم الموديل أو العلامة وكل قيد آخر ولا تستبدلها باسم الفئة فقط.
 - أي رسالتين لهما المعنى والقيود نفسيهما يجب أن تنتجا canonical_request
   والحقول نفسها، حتى لو اختلفت صياغتهما.
 - حافظ على نوع الهدف، والمنتج أو الفئة، واتجاه السعر وحدوده، والعملة،
@@ -3553,6 +3598,9 @@ category_filter_requested فقط.
         )
     result_provider = getattr(result, "provider", None)
     canonical_request = _canonical_user_request(result, compact_text)
+    # The original wording is input to the AI, not a second set of lexical
+    # constraints on its semantic interpretation. Fall back only if absent.
+    category_request_text = canonical_request
     category_filter_requested_present = (
         isinstance(result, dict)
         and "category_filter_requested" in result
@@ -3562,13 +3610,12 @@ category_filter_requested فقط.
         and result.get("category_filter_requested") is True
     )
     saved_special_categories = _saved_special_categories_in_text(
-        text,
-        canonical_request,
+        category_request_text,
     )
     broad_saved_category_request = (
         bool(saved_special_categories)
         and _special_category_request_is_broad(
-            f"{text} {canonical_request}",
+            category_request_text,
             saved_special_categories,
         )
     )
@@ -3819,8 +3866,7 @@ category_filter_requested فقط.
         normalized["category"] = None
     normalized = _apply_saved_special_category_intent(
         normalized,
-        text,
-        canonical_request,
+        category_request_text,
     )
     return normalized
 

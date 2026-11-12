@@ -28,6 +28,8 @@ from core.ai import (
     _extract_offer_type_from_text,
     _local_parse_user_request,
     _normalize_keyword_groups,
+    _saved_special_categories_in_text,
+    _special_category_request_is_broad,
     analyze_channel_post,
     analyze_channel_posts,
     analyze_error_logs,
@@ -1944,6 +1946,77 @@ class AiParsingTests(unittest.TestCase):
         )
         self.assertEqual(result["shipping_country"], "فرنسا")
         self.assertEqual(result["keywords"], [])
+
+    def test_saved_categories_accept_arabic_articles_and_small_typos(self):
+        for text, expected in [
+            ("اريد عروض الساعات الذكية", "smart_watches"),
+            ("عروض الساعات الذكيه", "smart_watches"),
+            ("عروض ساعات ذكيية", "smart_watches"),
+            ("عروض الساعه الذكية", "smart_watches"),
+            ("عروض السماعات اللاسلكية", "bluetooth_headphones"),
+            ("عروض السماعات البلوتوث", "bluetooth_headphones"),
+            ("عروض سماعات بلوتوت", "bluetooth_headphones"),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    _saved_special_categories_in_text(text), [expected],
+                )
+                self.assertTrue(_special_category_request_is_broad(text, [expected]))
+
+    def test_saved_categories_do_not_broaden_models_or_accessories(self):
+        for text in [
+            "حافظة للساعات الذكية",
+            "أريد أغطية وحزام الساعات الذكية",
+            "غطاء السماعات البلوتوث",
+            "عروض الساعات العادية",
+            "عروض السماعات السلكية",
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(_saved_special_categories_in_text(text), [])
+        for text in [
+            "عروض الساعات الذكية Huawei Watch GT 5",
+            "عروض السماعات البلوتوث Lenovo XT80",
+        ]:
+            categories = _saved_special_categories_in_text(text)
+            self.assertTrue(categories)
+            self.assertFalse(_special_category_request_is_broad(text, categories))
+
+    @patch("core.ai._call_ai")
+    def test_deepseek_semantic_category_uses_canonical_not_original_wording(
+        self, call_ai,
+    ):
+        for original, canonical, category in [
+            ("اريد عروض الساعات الذكية", "عروض ساعات ذكية", "smart_watches"),
+            ("بغيت مونترا ذكية", "عروض ساعات ذكية", "smart_watches"),
+            ("عندكم سماعت بلتوت؟", "عروض سماعات بلوتوث", "bluetooth_headphones"),
+        ]:
+            with self.subTest(original=original):
+                call_ai.reset_mock()
+                response = AIResponse({
+                    "canonical_request": canonical + " أقل من 50 دولار تشحن إلى فرنسا",
+                    "request_type": "category_price_range",
+                    "keywords": [],
+                    "category": None,
+                    "max_price": 50,
+                    "price_mode": "below",
+                    "shipping_country": "France",
+                    "category_filter_requested": True,
+                }, provider="DeepSeek")
+                response.keyword_cache_active = True
+                response.keyword_cache_keywords = []
+                call_ai.return_value = response
+
+                result = parse_user_request(
+                    original + " أقل من 50 دولار تشحن إلى فرنسا"
+                )
+
+                self.assertEqual(result["saved_category"], category)
+                self.assertEqual(result["request_type"], "trending")
+                self.assertEqual(result["trending_order"], "frequency")
+                self.assertEqual(result["keywords"], [])
+                self.assertEqual(result["max_price"], 50)
+                self.assertEqual(result["shipping_country"], "France")
+                self.assertEqual(call_ai.call_count, 1)
 
     @patch("core.ai.get_gemini_keyword_cache_snapshot")
     @patch("core.ai._call_ai")
