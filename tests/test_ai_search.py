@@ -3433,6 +3433,94 @@ class DatabaseSearchTests(unittest.TestCase):
         self.assertEqual(len(result), 25)
         self.assertEqual([post["id"] for post in result[:3]], [1, 2, 3])
 
+    @patch.object(db, "DATABASE_URL", "postgres://test")
+    @patch.object(db, "get_db_connection")
+    @patch.object(db, "_post_match_score", return_value=1.0)
+    def test_product_type_deduplicates_but_specific_model_keeps_offers(
+        self,
+        _match_score,
+        get_connection,
+    ):
+        cursor = get_connection.return_value.cursor.return_value.__enter__.return_value
+        cursor.description = [
+            (name,) for name in (
+                "id",
+                "title",
+                "price",
+                "content",
+                "processing_status",
+                "source_link",
+                "published_at",
+                "photo_file_id",
+                "link_img",
+                "source_channel_id",
+                "source_message_id",
+                "aliexpress_product_id",
+                "shipping_country",
+                "offer_type",
+                "category",
+                "first_level_category_name",
+                "second_level_category_name",
+            )
+        ]
+        rows = [
+            (
+                1,
+                "H96 Max Android TV Box 4K",
+                40,
+                "",
+                "processed",
+                None,
+                datetime(2025, 1, 1, tzinfo=timezone.utc),
+                None,
+                None,
+                None,
+                None,
+                "same-tv-box-product",
+                None,
+                "normal",
+                "other",
+                None,
+                None,
+            ),
+            (
+                2,
+                "H96 Max Android TV Box 4K",
+                35,
+                "",
+                "processed",
+                None,
+                datetime(2025, 1, 2, tzinfo=timezone.utc),
+                None,
+                None,
+                None,
+                None,
+                "same-tv-box-product",
+                None,
+                "normal",
+                "other",
+                None,
+                None,
+            ),
+        ]
+        cursor.fetchall.side_effect = [rows, rows]
+
+        broad_type_results = db.search_channel_posts({
+            "request_type": "product_best",
+            "product_scope": "broad",
+            "category_filter_requested": False,
+            "keywords": ["Android TV Box"],
+        })
+        specific_model_results = db.search_channel_posts({
+            "request_type": "product_best",
+            "product_scope": "specific",
+            "category_filter_requested": False,
+            "keywords": ["H96 Max Android TV Box"],
+        })
+
+        self.assertEqual([post["id"] for post in broad_type_results], [2])
+        self.assertEqual([post["id"] for post in specific_model_results], [2, 1])
+
     @patch.object(db, "_post_match_score", return_value=1.0)
     def test_unlimited_filtered_trending_keeps_all_representatives(
         self,

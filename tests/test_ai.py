@@ -17,6 +17,7 @@ from core.ai import (
     _create_gemini_keyword_cache,
     _deepseek_request_context,
     _deepseek_cache_phrase_candidates,
+    _infer_deepseek_product_scope,
     _gemini_official_category_cache_context,
     _gemini_keyword_cache_state_hash,
     _gemini_keyword_cache_context,
@@ -1758,25 +1759,20 @@ class AiParsingTests(unittest.TestCase):
         "core.ai.get_gemini_keyword_cache_snapshot",
         return_value={"keywords": ["smart_scale", "car-code-reader"]},
     )
-    def test_deepseek_user_context_uses_the_closed_phrase_vocabulary(
+    def test_deepseek_user_context_defers_phrase_matching_to_small_candidates(
         self,
         load_snapshot,
     ):
         context = _deepseek_request_context("user")
 
-        self.assertEqual(
-            context["allowed_keywords"],
-            ["smart_scale", "car-code-reader"],
-        )
-        self.assertIn("smart scale", context["system_prompt"])
-        self.assertIn("car-code-reader", context["system_prompt"])
-        self.assertIn("عبارات كاملة من القائمة فقط", context["system_prompt"])
-        self.assertIn("أيًا كانت اللغة أو الكتابة", context["system_prompt"])
-        self.assertIn("قارن هوية المنتج لا مجرد الترابط", context["system_prompt"])
-        self.assertIn("لا تحوّل طلب فئة فقط إلى طلب منتج محدد", context["system_prompt"])
+        self.assertNotIn("allowed_keywords", context)
+        self.assertIn("لا تُحمّلها قائمة عبارات العروض كاملة", context["system_prompt"])
+        self.assertIn("cache_search_terms", context["system_prompt"])
+        self.assertIn("قائمة مرشحين محدودة", context["system_prompt"])
         self.assertIn("category_filter_requested", context["system_prompt"])
+        self.assertIn("product_scope", context["system_prompt"])
         self.assertNotIn("cachedContent", context["system_prompt"])
-        load_snapshot.assert_called_once_with()
+        load_snapshot.assert_not_called()
 
     @patch(
         "core.ai.get_gemini_keyword_cache_snapshot",
@@ -1821,8 +1817,10 @@ class AiParsingTests(unittest.TestCase):
         self.assertIn("لا تضع category=accessories", context["system_prompt"])
         self.assertIn("هو جهاز نفخ محدد", context["system_prompt"])
         self.assertIn("«عروض مصابيح» طلب نوع منتج", context["system_prompt"])
+        self.assertIn("TV box وAndroid TV box", context["system_prompt"])
         self.assertIn("المنزل/البيت إلى saved_home", context["system_prompt"])
-        load_snapshot.assert_called_once_with()
+        self.assertNotIn("allowed_keywords", context)
+        load_snapshot.assert_not_called()
 
     def test_local_parser_distinguishes_product_type_from_home_category(self):
         self.assertEqual(
@@ -1863,6 +1861,84 @@ class AiParsingTests(unittest.TestCase):
         self.assertIn(lamp, candidates)
         self.assertIn(unrelated, candidates)
         self.assertNotIn(screen, candidates)
+
+    def test_deepseek_product_scope_separates_type_and_model_requests(self):
+        self.assertEqual(
+            _infer_deepseek_product_scope("اريد عروض على اجهزة tv box"),
+            "broad",
+        )
+        self.assertEqual(
+            _infer_deepseek_product_scope("اريد TV Box X96 Max 4/64GB"),
+            "specific",
+        )
+        self.assertEqual(
+            _infer_deepseek_product_scope(
+                "اريد TV Box X96 Max 4/64GB",
+                provider_scope="broad",
+            ),
+            "specific",
+        )
+        self.assertEqual(
+            _infer_deepseek_product_scope(
+                "اريد عروض على TV Box",
+                provider_scope="specific",
+            ),
+            "specific",
+        )
+
+    @patch("core.ai.get_gemini_keyword_cache_snapshot")
+    @patch("core.ai._call_ai")
+    def test_deepseek_tv_box_request_matches_cached_phrases_in_one_scan(
+        self,
+        call_ai,
+        get_snapshot,
+    ):
+        phrase = (
+            "H96 Max V58 Android TV Box Android 12.0 4K 8K UHD "
+            "Media Player 4GB RAM 64GB ROM"
+        )
+        unrelated = "Protective Box for TV Wall Mount Accessories"
+        phrases = [phrase, unrelated]
+        get_snapshot.return_value = {"keywords": phrases}
+        primary = AIResponse(
+            {
+                "canonical_request": "عروض على اجهزة tv box",
+                "request_type": "product_best",
+                "product_scope": "broad",
+                "cache_search_terms": [
+                    "tv box",
+                    "android tv box",
+                    "set-top box",
+                    "بوكس تلفاز",
+                ],
+                "keywords": [],
+                "keyword_groups": [],
+            },
+            provider="DeepSeek",
+        )
+        primary.keyword_cache_active = True
+        primary.keyword_cache_keywords = phrases
+        matched = AIResponse(
+            {"keywords": [phrase], "keyword_groups": [[phrase]]},
+            provider="DeepSeek",
+        )
+        matched.keyword_cache_active = True
+        matched.keyword_cache_keywords = phrases
+        call_ai.side_effect = [primary, matched]
+
+        result = parse_user_request("اريد عروض على اجهزة tv box")
+
+        self.assertEqual(call_ai.call_count, 2)
+        self.assertEqual(result["request_type"], "product_best")
+        self.assertEqual(result["product_scope"], "broad")
+        self.assertEqual(result["keywords"], [phrase])
+        self.assertEqual(result["keyword_groups"], [[phrase]])
+        self.assertFalse(result["category_filter_requested"])
+        self.assertIsNone(result.get("saved_subcategory"))
+        self.assertIsNone(result.get("saved_category"))
+        override = call_ai.call_args.kwargs["request_context_override"]
+        self.assertIn(phrase, override["allowed_keywords"])
+        self.assertLessEqual(len(override["allowed_keywords"]), 180)
 
     def test_deepseek_saved_offer_category_is_validated_and_required_for_category_search(self):
         result = _normalize_user_request_result(

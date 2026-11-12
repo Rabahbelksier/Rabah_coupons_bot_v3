@@ -2077,7 +2077,7 @@ def search_channel_posts(intent, limit=None):
         "trending",
     } or (
         request_type in _PRODUCT_REQUEST_TYPES
-        and _is_broad_product_request(intent, keywords)
+        and _should_deduplicate_product_request(intent, keywords)
     ):
         return _deduplicate_ranked_posts(ranked, result_limit, intent)
     return ranked if result_limit is None else ranked[:result_limit]
@@ -2259,6 +2259,16 @@ def _is_broad_product_request(intent, keywords):
         for token in _search_tokens(keyword)
     }
     return bool(keyword_tokens) and keyword_tokens <= (category_terms | brand_terms)
+
+
+def _should_deduplicate_product_request(intent, keywords):
+    """Deduplicate product-family results, but preserve exact model offers."""
+    product_scope = str(intent.get("product_scope") or "").casefold()
+    if product_scope == "broad":
+        return True
+    if product_scope == "specific":
+        return False
+    return _is_broad_product_request(intent, keywords)
 
 
 def _price_order_key(post, intent, match_score, position):

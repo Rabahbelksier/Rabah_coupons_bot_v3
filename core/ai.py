@@ -677,40 +677,27 @@ _DEEPSEEK_SYSTEM_PREFIX = (
 
 
 def _deepseek_request_context(request_kind):
-    """Build DeepSeek's stable system-message prefix and closed vocabularies."""
+    """Build DeepSeek's compact parser prompt and closed category list."""
     system_parts = [_DEEPSEEK_SYSTEM_PREFIX]
     context = {"system_prompt": ""}
 
     if request_kind == "user":
-        try:
-            snapshot = get_gemini_keyword_cache_snapshot()
-        except Exception:
-            logger.exception("Could not load the phrase vocabulary for DeepSeek")
-            snapshot = {"keywords": []}
-        keywords = list(snapshot.get("keywords") or [])
-        context["allowed_keywords"] = keywords
         system_parts.extend([
-            GEMINI_CACHE_PHRASE_MATCHING_RULES,
-            "قاموس البحث مغلق: عند استخراج keywords أو keyword_groups، "
-            "اختر عبارات كاملة من القائمة فقط. لا تخترع ترجمات أو تركّب "
-            "عبارات من أجزاء مختلفة. ضع البدائل للمنتج نفسه داخل مجموعة "
-            "OR، والمنتجات المستقلة في مجموعات منفصلة. إذا لم توجد عبارة "
-            "مناسبة فأعد القائمتين فارغتين.",
-            "افحص قاموس العبارات كاملًا من أوله إلى آخره، وقارن كل عبارة "
-            "بطلب المستخدم قبل إنهاء المطابقة. لا تتوقف عند أول تطابق أو "
-            "تكتفِ بأقرب عبارة؛ أعد جميع العبارات التي تصف المنتج نفسه "
-            "أو مرادفاته المعروفة، واجمعها في مجموعة OR واحدة. لا تُدرج "
-            "منتجًا مجاورًا أو ملحقًا لمجرد ارتباطه بالمنتج.",
-            "قاموس العبارات النشط:\n" + (
-                "\n".join(f"- {_format_gemini_keyword(keyword)}" for keyword in keywords)
-                if keywords
-                else "(القاموس فارغ)"
-            ),
+            "هذه المرحلة تحلل نية المستخدم فقط؛ لا تُحمّلها قائمة عبارات "
+            "العروض كاملة. عند طلب منتج، أعد cache_search_terms كمرادفات "
+            "قصيرة ومحددة تساعد على إيجاد مرشحي القاموس بلغات مختلفة، "
+            "واترك keywords وkeyword_groups فارغتين ما لم تكن العبارة "
+            "المحفوظة مؤكدة من السياق. ستتم مطابقة العبارات الحرفية في "
+            "مرحلة منفصلة مع قائمة مرشحين محدودة.",
             "أضف category_filter_requested كقيمة boolean: true فقط إذا كان "
             "المقصود فئة رئيسية كاملة من أزرار عروض AI المحفوظة، وfalse إذا "
             "كان المقصود نوع منتج بعينه أو عامًا. «أريد عروض المنزل/البيت» "
             "طلب فئة؛ «أريد عروض مصباح/مصابيح» طلب منتج. لا تجعل فئة داخلية "
             "مثل home دليلًا على أن منتجًا يخص المنزل.",
+            "أضف product_scope لطلب المنتج فقط: broad إذا كان المستخدم "
+            "يطلب نوعًا عامًا أو علامة فقط ويريد عروض منتجات مختلفة من ذلك "
+            "النوع، وspecific إذا سمّى موديلًا أو منتجًا بعينه؛ وإلا null. "
+            "لا تعتبر قيود السعر أو الشحن أو المواصفات وحدها موديلًا.",
         ])
         saved_offer_categories = []
         for key, label in SAVED_OFFER_CATEGORY_FILTERS:
@@ -750,8 +737,11 @@ def _deepseek_request_context(request_kind):
             "keyword_groups فارغتين. لا تشترط ذكر اسم الزر حرفيًا: افهم "
             "المرادفات والمعنى، مثل المنزل/البيت إلى saved_home. أما "
             "المصباح أو جهاز فحص السيارات فهما نوعا منتج، لا فئتا منزل أو "
-            "مركبات؛ أعد عبارات القاموس الكاملة لهما، واترك كل saved_* "
-            "فارغًا ما لم يطلب المستخدم الفئة الرئيسية صراحةً أيضًا.",
+            "مركبات؛ أعد مفاهيمهما بلغات القاموس في cache_search_terms، "
+            "واترك keywords وkeyword_groups فارغتين، وكل saved_* "
+            "فارغًا ما لم يطلب المستخدم الفئة الرئيسية صراحةً أيضًا. لطلب "
+            "TV Box استخدم مرادفات TV box وAndroid TV box وset-top box "
+            "في cache_search_terms، لا كلمات مثل TV وحدها.",
             "الجهاز أو الأداة ذات الوظيفة المسماة، حتى دون علامة أو موديل، "
             "طلب منتج product_* وليس طلب فئة category_*: مثال «عروض جهاز "
             "نفخ عجلات السيارات» هو جهاز نفخ محدد، وليس طلب كل عروض فئة "
@@ -770,7 +760,8 @@ def _deepseek_request_context(request_kind):
             "مع جهاز أو مركبة. category خاص بالتصنيفات الداخلية القديمة "
             "ولا يصبح قيدًا إلا إذا طلب المستخدم ذلك صراحة. "
             "category_filter_requested=true فقط عند طلب فئة رئيسية كاملة؛ "
-            "لا تضع saved_* تلقائيًا في طلب المنتج.",
+            "لا تضع saved_* تلقائيًا في طلب المنتج. لا تكرر search terms "
+            "للطلب العام؛ product_scope يوضح هل الطلب نوع واسع أم موديل محدد.",
         ])
     elif request_kind == "user_category":
         categories = list(_GEMINI_OFFICIAL_CATEGORY_NAMES)
@@ -3350,6 +3341,27 @@ def _deepseek_product_search_terms(result, text):
     return unique
 
 
+def _infer_deepseek_product_scope(text, provider_scope=None):
+    """Mark model-specific requests separately from broad product families."""
+    normalized = _keyword_vocabulary_key(text)
+    if re.search(
+        r"(?:موديل|طراز|رقم\s+الموديل|model|version)\s*[:#-]?\s*\S+",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return "specific"
+
+    for token in normalized.split():
+        if re.fullmatch(r"\d+(?:gb|tb|mah|hz|mp|w|k|p)", token):
+            continue
+        if re.fullmatch(r"[a-z]{1,5}\d{1,4}[a-z0-9]*", token):
+            if token not in {"wifi6", "usb3", "5g", "4k", "8k"}:
+                return "specific"
+    if provider_scope in {"broad", "specific"}:
+        return provider_scope
+    return "broad"
+
+
 def _deepseek_cache_phrase_candidates(cached_keywords, search_terms):
     """Shortlist exact cache entries by overlap with multilingual concepts."""
     ignored = {
@@ -3478,6 +3490,8 @@ def _match_user_product_terms_in_gemini_cache(
 المطلوب، لا أول عبارة فقط. مثلًا «مصابيح» تشمل المصابيح الأمامية والليلية
 واللمبات، لكن لا تشمل حامل المصباح أو قاعدته أو المقبس لأنها ملحقات، ولا
 لوحة مفاتيح أو شاشة تذكر LED/الإضاءة كميزة عرضية.
+ولطلب «TV Box» طابق عبارات Android TV box وset-top box وAndroid box؛
+استبعد الحوامل والريموتات وملحقات التلفاز.
 هذا الطلب عن منتج أو نوع منتج، وليس طلب فئة رئيسية. لا تعتبر الفئة أو
 التصنيف الأولي قيدًا على المطابقة. لا تدرج منتجًا مجاورًا أو ملحقًا أو
 حاملًا/قاعدة/مقبسًا للمصباح، ولا شاشة هاتف/تلفاز أو شاشة LED لمجرد وجود
@@ -4092,6 +4106,7 @@ saved_categories للساعات الذكية وسماعات البلوتوث ف�
 {{
   "canonical_request": "",
   "request_type": "unsupported",
+  "product_scope": null,
   "cache_search_terms": [],
   "keywords": [],
   "keyword_groups": [],
@@ -4113,12 +4128,18 @@ saved_categories للساعات الذكية وسماعات البلوتوث ف�
 
 ضع كلمات البحث بالعربية والإنجليزية عند الحاجة داخل keywords.
 لا تضع كلمات الطلب العامة مثل: أرخص، أفضل، عرض، سعر، دولار، هاتف، phone
-داخل keywords لطلب منتج محدد. عند DeepSeek، يجب أن تكون keywords و
-keyword_groups عبارات كاملة حرفيًا من قاموس العبارات النشط، لا مرادفات
-مخترعة أو كلمات مفردة. ضع الترجمات والمرادفات القصيرة للمنتج في
-cache_search_terms فقط للمساعدة على إيجاد عبارات القاموس؛ لا تُرسل هذا
-الحقل إلى البحث. عند وجود خطأ إملائي، افهمه ثم أعد العبارة الكاملة المطابقة
-للقاموس. للطلبات عن فئة، استخدم مفتاح saved_* المناسب دون كلمات منتج.
+داخل keywords لطلب منتج محدد. ضع الترجمات والمرادفات القصيرة في
+cache_search_terms فقط للمساعدة على إيجاد العبارات المطابقة؛ لا يُرسل هذا
+الحقل إلى البحث. عند DeepSeek، هذه المرحلة تحلل النية فقط ولا ترى قاموس
+العروض كاملًا، لذا اترك keywords وkeyword_groups فارغتين لطلب المنتج، وضع
+مرادفاته بلغات مختلفة في cache_search_terms. سيختار الاستدعاء التالي
+العبارات الكاملة من القاموس النشط. عند وجود خطأ إملائي، افهمه ثم أعد
+المفهوم المصحح في cache_search_terms. للطلبات عن فئة، استخدم مفتاح
+saved_* المناسب دون كلمات منتج.
+في product_scope أعد broad عند طلب نوع عام أو علامة فقط، وspecific عندما
+يسمي المستخدم موديلًا/منتجًا بعينه؛ اتركه null لغير طلبات المنتجات.
+«أجهزة TV Box» نوع عام broad، أما «TV Box X96 Max 4/64GB» منتج محدد
+specific. السعر والشحن لا يحولان النوع العام إلى منتج محدد.
 استخرج اسم المنتج من وسط الجملة حتى لو سبقه أو لحقه شرح طويل.
 - required_specs يجب أن تحتوي فقط على شروط المواصفات الصريحة من نوع storage
   أو ram. مثال: [{{"type": "storage", "value": "256GB"}},
@@ -4154,8 +4175,11 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
   استخرج كل عبارات المصابيح الكاملة ذات الصلة من القاموس.
 - «عروض خاصة بالمنزل» أو «عروض للبيت» => category_cheapest مع
   saved_subcategory=saved_home، حتى لو لم ترد كلمة «المنزل» حرفيًا.
-- «عروض جهاز فحص السيارات» => product_best؛ أخرج عبارات القاموس الكاملة
-  التي تصف قارئ/جهاز فحص السيارات، لا عبارة «scanner» وحدها.
+- «عروض جهاز فحص السيارات» => product_best وproduct_scope=broad؛ أخرج
+  مرادفات المفهوم في cache_search_terms مثل OBD2 وdiagnostic scanner.
+- «أريد عروض على أجهزة TV Box» => product_best وproduct_scope=broad؛
+  ضع TV box وAndroid TV box وset-top box في cache_search_terms. إذا سمّى
+  المستخدم موديلًا مثل X96 Max أو مواصفة موديل محددة فاجعله specific.
 
 أمثلة:
 - "عروض الهواتف الاقل من 100$" و"عروض هواتف بسعر اقل من 100$" لهما
@@ -4197,6 +4221,11 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
         )
     result_provider = getattr(result, "provider", None)
     canonical_request = _canonical_user_request(result, compact_text)
+    provider_product_scope = (
+        result.get("product_scope")
+        if isinstance(result, dict)
+        else None
+    )
     semantic_cache_terms = (
         _deepseek_product_search_terms(result, canonical_request)
         if result_provider == "DeepSeek"
@@ -4224,8 +4253,11 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
         )
     )
     is_closed_vocabulary_result = (
-        result_provider in _CLOSED_VOCABULARY_PROVIDERS
-        and getattr(result, "keyword_cache_active", False)
+        result_provider == "DeepSeek"
+        or (
+            result_provider == "Gemini"
+            and getattr(result, "keyword_cache_active", False)
+        )
     )
     gemini_snapshot = None
     if is_closed_vocabulary_result:
@@ -4234,15 +4266,15 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
             "keyword_cache_keywords",
             None,
         )
-        gemini_snapshot = (
-            {"keywords": active_keywords}
-            if active_keywords is not None
-            else get_gemini_keyword_cache_snapshot()
-        )
-        result = _restrict_gemini_keywords_to_snapshot(
-            result,
-            gemini_snapshot,
-        )
+        if active_keywords is not None:
+            gemini_snapshot = {"keywords": active_keywords}
+        elif result_provider == "Gemini":
+            gemini_snapshot = get_gemini_keyword_cache_snapshot()
+        if gemini_snapshot is not None:
+            result = _restrict_gemini_keywords_to_snapshot(
+                result,
+                gemini_snapshot,
+            )
     raw_request_type = (
         result.get("request_type")
         if isinstance(result, dict)
@@ -4534,6 +4566,13 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
         normalized["category_filter_requested"] = (
             category_filter_requested
         )
+        if normalized.get("request_type") in product_request_types:
+            normalized["product_scope"] = _infer_deepseek_product_scope(
+                canonical_request,
+                provider_product_scope,
+            )
+        else:
+            normalized.pop("product_scope", None)
     return normalized
 
 
