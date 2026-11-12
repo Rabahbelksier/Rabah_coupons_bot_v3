@@ -175,9 +175,33 @@ _DEEPSEEK_PRODUCT_TERM_ALIASES = {
         "car diagnostic scanner", "obd2 scanner",
         "vehicle diagnostic tool", "elm327",
     ),
+    "tv box": (
+        "tv box", "android tv box", "android box", "smart tv box",
+        "set top box", "set-top box", "iptv box",
+    ),
+    "tvbox": (
+        "tv box", "android tv box", "android box", "smart tv box",
+        "set top box", "set-top box", "iptv box",
+    ),
+    "جهاز tv box": (
+        "tv box", "android tv box", "android box", "smart tv box",
+        "set top box", "set-top box", "iptv box",
+    ),
+    "أجهزة tv box": (
+        "tv box", "android tv box", "android box", "smart tv box",
+        "set top box", "set-top box", "iptv box",
+    ),
+    "بوكس تلفاز": (
+        "tv box", "android tv box", "android box", "smart tv box",
+        "set top box", "set-top box", "iptv box",
+    ),
+    "اندرويد بوكس": (
+        "tv box", "android tv box", "android box", "smart tv box",
+        "set top box", "set-top box", "iptv box",
+    ),
 }
-_DEEPSEEK_CACHE_MATCH_BATCH_SIZE = 120
-_DEEPSEEK_CACHE_MATCH_CANDIDATE_LIMIT = 360
+_DEEPSEEK_CACHE_MATCH_BATCH_SIZE = 180
+_DEEPSEEK_CACHE_MATCH_CANDIDATE_LIMIT = 180
 _DEEPSEEK_INTERNAL_CATEGORY_TO_SAVED = {
     "phones": "saved_phones",
     "tablets": "saved_tablets",
