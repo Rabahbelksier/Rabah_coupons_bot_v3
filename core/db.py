@@ -1931,6 +1931,7 @@ def search_channel_posts(intent, limit=None):
             or intent.get("target_price") is not None
             or offer_type
             or intent.get("saved_category")
+            or intent.get("saved_categories")
             or intent.get("saved_subcategory")
             or intent.get("official_category")
             or intent.get("official_categories")
@@ -2344,10 +2345,17 @@ def _frequency_order_requested(intent):
 
     request_type = intent.get("request_type")
     if request_type in {"category_cheapest", "category_price_range"}:
-        return bool(intent.get("category") or intent.get("official_categories"))
+        return bool(
+            intent.get("category")
+            or intent.get("official_categories")
+            or intent.get("saved_category")
+            or intent.get("saved_categories")
+        )
 
     if request_type == "trending" and (
-        intent.get("saved_category") or intent.get("saved_subcategory")
+        intent.get("saved_category")
+        or intent.get("saved_categories")
+        or intent.get("saved_subcategory")
     ):
         return True
 
@@ -2911,6 +2919,11 @@ def _saved_subcategory_matches(post, requested_subcategory):
 def _saved_category_matches(post, requested_category):
     if not requested_category:
         return True
+    if isinstance(requested_category, (list, tuple, set)):
+        return any(
+            _saved_category_matches(post, category)
+            for category in requested_category
+        )
     if requested_category not in SAVED_OFFER_CATEGORY_COLUMN_FILTERS:
         return False
     return (
@@ -2923,7 +2936,7 @@ def _post_match_score(post, intent, keywords):
     request_type = intent.get("request_type")
     if not _saved_category_matches(
         post,
-        intent.get("saved_category"),
+        intent.get("saved_categories") or intent.get("saved_category"),
     ):
         return None
     if not _saved_subcategory_matches(

@@ -1834,6 +1834,117 @@ class AiParsingTests(unittest.TestCase):
             "user_category",
         )
 
+    @patch("core.ai._call_ai")
+    def test_deepseek_product_search_scans_phrases_after_a_primary_match(
+        self,
+        call_ai,
+    ):
+        phrases = [
+            f"Automotive diagnostic scanner model {index}"
+            for index in range(12)
+        ]
+        primary = AIResponse(
+            {
+                "request_type": "product_best",
+                "keywords": [phrases[0]],
+                "keyword_groups": [[phrases[0]]],
+                "category_filter_requested": False,
+            },
+            provider="DeepSeek",
+        )
+        primary.keyword_cache_active = True
+        primary.keyword_cache_keywords = phrases
+        exhaustive_match = AIResponse(
+            {
+                "keywords": phrases[1:7],
+                "keyword_groups": [phrases[1:]],
+            },
+            provider="DeepSeek",
+        )
+        exhaustive_match.keyword_cache_active = True
+        exhaustive_match.keyword_cache_keywords = phrases
+        call_ai.side_effect = [primary, exhaustive_match]
+
+        result = parse_user_request("أريد جهاز فحص السيارات")
+
+        self.assertEqual(call_ai.call_count, 2)
+        self.assertEqual(set(result["keyword_groups"][0]), set(phrases))
+        self.assertEqual(result["keywords"], phrases[1:7])
+        self.assertIn("حتى آخر عبارة", call_ai.call_args.args[0])
+        self.assertIn(phrases[-1], primary.keyword_cache_keywords)
+
+    @patch("core.ai._call_ai")
+    def test_deepseek_saved_special_categories_preserve_user_filters(
+        self,
+        call_ai,
+    ):
+        call_ai.return_value = AIResponse(
+            {
+                "request_type": "category_price_range",
+                "keywords": [],
+                "category": "headphones",
+                "min_price": 20,
+                "max_price": 50,
+                "price_mode": None,
+                "shipping_country": "France",
+                "required_specs": [{"type": "ram", "value": "8GB"}],
+                "category_filter_requested": True,
+            },
+            provider="DeepSeek",
+        )
+        call_ai.return_value.keyword_cache_active = True
+        call_ai.return_value.keyword_cache_keywords = []
+
+        result = parse_user_request(
+            "أريد عروض سماعات بلوثوث أو ساعات ذكية بين 20 و50 دولار "
+            "تشحن إلى فرنسا وذاكرة 8GB"
+        )
+
+        self.assertEqual(
+            result["saved_categories"],
+            ["bluetooth_headphones", "smart_watches"],
+        )
+        self.assertEqual(result["request_type"], "trending")
+        self.assertEqual(result["trending_order"], "frequency")
+        self.assertEqual(result["min_price"], 20)
+        self.assertEqual(result["max_price"], 50)
+        self.assertEqual(result["shipping_country"], "France")
+        self.assertEqual(
+            result["required_specs"],
+            [{"type": "ram", "value": "8GB"}],
+        )
+        self.assertNotIn("category", result)
+        self.assertNotIn("official_categories", result)
+
+    @patch("core.ai._call_ai")
+    def test_deepseek_unsupported_category_recovers_to_saved_offer_search(
+        self,
+        call_ai,
+    ):
+        call_ai.return_value = AIResponse(
+            {
+                "canonical_request": "عروض سماعات بلوتوث تشحن إلى فرنسا",
+                "request_type": "unsupported",
+                "keywords": [],
+                "category_filter_requested": False,
+            },
+            provider="DeepSeek",
+        )
+        call_ai.return_value.keyword_cache_active = True
+        call_ai.return_value.keyword_cache_keywords = []
+
+        result = parse_user_request(
+            "أريد عروض سماعات بلوتوث تشحن إلى فرنسا"
+        )
+
+        self.assertEqual(result["request_type"], "trending")
+        self.assertEqual(
+            result["saved_category"],
+            "bluetooth_headphones",
+        )
+        self.assertEqual(result["shipping_country"], "فرنسا")
+        self.assertEqual(result["keywords"], [])
+
     @patch("core.ai.get_gemini_keyword_cache_snapshot")
     @patch("core.ai._call_ai")
     def test_deepseek_phrase_retry_uses_closed_vocabulary_and_preserves_filters(

@@ -4037,6 +4037,35 @@ class DatabaseSearchTests(unittest.TestCase):
             )
         )
 
+    def test_typed_special_category_filter_matches_saved_offer_categories(self):
+        from core.db import _frequency_order_requested, _post_match_score
+
+        intent = {
+            "request_type": "trending",
+            "saved_categories": [
+                "bluetooth_headphones",
+                "smart_watches",
+            ],
+            "trending_order": "frequency",
+        }
+        self.assertTrue(_frequency_order_requested(intent))
+        for category in ("bluetooth_headphones", "smart_watches"):
+            with self.subTest(category=category):
+                self.assertIsNotNone(
+                    _post_match_score(
+                        {"title": "Saved AI offer", "category": category},
+                        intent,
+                        [],
+                    )
+                )
+        self.assertIsNone(
+            _post_match_score(
+                {"title": "Different category", "category": "accessories"},
+                intent,
+                [],
+            )
+        )
+
     def test_saved_category_overrides_compatibility_words_in_title(self):
         from core.db import _post_match_score
 
