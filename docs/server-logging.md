@@ -1,8 +1,8 @@
 # Server diagnostics
 
-Console logs are JSON lines. Telegram replies, exception handling, retry policy,
-database writes and the existing admin error-report format are unchanged.
-No additional logging dependencies or credentials are required.
+Console logs are JSON lines. Telegram replies, exception handling and retry
+policies are unchanged. Admin log downloads use Railway CLI and do not read or
+write error logs in the application database.
 
 ## Reading Railway logs
 
@@ -36,13 +36,17 @@ Arguments, return values, user messages and credentials are not added to logs.
 Console formatting removes URL paths/query strings, database connection URLs,
 Telegram token patterns, bearer credentials and common labelled secret fields.
 Pattern-based masking cannot guarantee detection of arbitrary unlabelled secrets;
-never add them to log messages. Existing database reports retain their original
-format and content; console masking is not a database-log sanitizer.
+never add them to log messages. Console masking is not a universal log sanitizer.
 
-Lifecycle diagnostics go only to console, never to `bot_error_logs`, so they do
-not add entries or change text in the bot's administrator reports.
-Logging failures are suppressed; return values and raised exceptions are preserved.
-No network calls or database calls are introduced by this diagnostics module.
+The admin menu downloads Railway runtime logs as JSON files for the last 15
+minutes, hour, 24 hours, seven days, or current calendar month. The current
+month starts at midnight in Africa/Algiers. Downloads are capped by
+`RAILWAY_LOGS_MAX_LINES`; the file marks when it may have reached that cap.
+Previously persisted `bot_error_logs` rows are not deleted, but new rows are no
+longer written and the bot no longer creates or queries that table.
 
-The Railway deployment needs the updated code before these logs appear.
-No production deployment is performed by editing this project.
+The Railway runtime needs the CLI installed and a project-scoped token in
+`RAILWAY_TOKEN`. Configure `RAILWAY_LOGS_PROJECT_ID`,
+`RAILWAY_LOGS_ENVIRONMENT_ID`, and `RAILWAY_LOGS_SERVICE_ID` for the service
+whose logs are downloaded. Optional CLI path, line-limit, and timeout settings
+have defaults in `config.py`.

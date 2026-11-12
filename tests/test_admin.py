@@ -15,8 +15,6 @@ from handlers.admin import (
     ADMIN_CALLBACK_PATTERN,
     TELEGRAM_MESSAGE_LIMIT,
     _parse_cart_line,
-    _format_error_log_file,
-    _format_error_period_report,
     _format_ai_duration,
     _format_ai_reset_line,
     _format_ai_usage_line,
@@ -46,7 +44,9 @@ from handlers.admin import (
     send_admin_menu,
     send_admin_users_menu,
     send_logs_report,
+    send_logs_file,
 )
+from services.railway_logs import RailwayLogFile
 from handlers.ai_search import AI_SEARCH_HELP_TEXT
 from handlers.admin_publishing import (
     handle_manual_publish_callback,
@@ -235,55 +235,56 @@ class AdminCartTests(unittest.TestCase):
 
     def test_admin_callback_pattern_accepts_short_error_report_actions(self):
         for callback in (
-            "admin_logs_hour",
-            "admin_logs_quarter",
+            "admin_logs_file_15m",
             "admin_logs_file_hour",
-            "admin_logs_file_quarter",
+            "admin_logs_file_today",
+            "admin_logs_file_week",
+            "admin_logs_file_month",
         ):
             with self.subTest(callback=callback):
                 self.assertIsNotNone(
                     re.fullmatch(ADMIN_CALLBACK_PATTERN, callback)
                 )
 
-    def test_logs_keyboard_has_direct_downloads_for_all_four_periods(self):
+    def test_logs_keyboard_has_direct_downloads_for_all_five_periods(self):
         buttons = [
             (button.text, button.callback_data)
             for row in logs_keyboard().inline_keyboard
             for button in row
         ]
 
-        self.assertIn(("logs اليوم", "admin_logs_today"), buttons)
-        self.assertIn(("logs هذا الأسبوع", "admin_logs_week"), buttons)
-        self.assertIn(("logs آخر ساعة", "admin_logs_file_hour"), buttons)
-        self.assertIn(("logs آخر ربع ساعة", "admin_logs_file_quarter"), buttons)
+        self.assertIn(("تنزيل آخر 15 دقيقة", "admin_logs_file_15m"), buttons)
+        self.assertIn(("تنزيل آخر ساعة", "admin_logs_file_hour"), buttons)
+        self.assertIn(("تنزيل اليوم", "admin_logs_file_today"), buttons)
+        self.assertIn(("تنزيل آخر أسبوع", "admin_logs_file_week"), buttons)
+        self.assertIn(("تنزيل هذا الشهر", "admin_logs_file_month"), buttons)
 
-    def test_formats_an_error_period_report_with_a_clear_header(self):
-        logs = [{
-            "created_at": "2026-09-13 20:00:00",
-            "level": "ERROR",
-            "logger_name": "test",
-            "message": "failed",
-        }]
-
-        report = _format_error_period_report(
-            "quarter",
-            logs,
-            "الملخص:\nحدث خطأ واحد.",
+    @patch("handlers.admin.send_logs_file", new_callable=AsyncMock)
+    def test_log_buttons_download_only_requested_period(
+        self,
+        send_file,
+    ):
+        context = SimpleNamespace(user_data={"admin_mode": True})
+        message = SimpleNamespace()
+        query = SimpleNamespace(
+            data="admin_logs_file_15m",
+            answer=AsyncMock(),
+            message=message,
         )
 
-        self.assertIn("━━ تقرير أخطاء آخر ربع ساعة ━━", report)
-        self.assertIn("الفترة: آخر 15 دقيقة", report)
-        self.assertIn("عدد الأخطاء: 1", report)
-        self.assertIn("الملخص:\nحدث خطأ واحد.", report)
+        import asyncio
+        asyncio.run(admin_callback(
+            SimpleNamespace(callback_query=query),
+            context,
+        ))
 
-    def test_formats_empty_error_log_file_without_changing_message(self):
-        self.assertEqual(
-            _format_error_log_file([]),
-            "لا توجد أخطاء مسجلة في هذه الفترة.\n",
+        send_file.assert_awaited_once_with(
+            message,
+            "15m",
         )
 
     @patch("handlers.admin.send_logs_file", new_callable=AsyncMock)
-    def test_short_error_report_buttons_download_only_requested_period(
+    def test_legacy_quarter_callback_maps_to_fifteen_minutes(
         self,
         send_file,
     ):
@@ -301,31 +302,7 @@ class AdminCartTests(unittest.TestCase):
             context,
         ))
 
-        send_file.assert_awaited_once_with(
-            message,
-            "quarter",
-        )
-
-    @patch("handlers.admin.send_logs_file", new_callable=AsyncMock)
-    def test_legacy_short_error_callback_still_downloads_directly(
-        self,
-        send_file,
-    ):
-        context = SimpleNamespace(user_data={"admin_mode": True})
-        message = SimpleNamespace()
-        query = SimpleNamespace(
-            data="admin_logs_file_hour",
-            answer=AsyncMock(),
-            message=message,
-        )
-
-        import asyncio
-        asyncio.run(admin_callback(
-            SimpleNamespace(callback_query=query),
-            context,
-        ))
-
-        send_file.assert_awaited_once_with(message, "hour")
+        send_file.assert_awaited_once_with(message, "quarter")
 
     def test_ai_service_keyboard_has_independent_task_columns(self):
         keyboard = ai_service_keyboard([
@@ -1258,25 +1235,10 @@ class AdminCartTests(unittest.TestCase):
             type(admin_menu_keyboard()),
         )
 
-    @patch(
-        "handlers.admin.analyze_error_logs",
-        side_effect=lambda logs, label: f"تحليل {label}: {len(logs)}",
-    )
-    @patch(
-        "handlers.admin.get_error_logs",
-        side_effect=lambda period: [{
-            "created_at": f"2026-09-13 {period}",
-            "level": "ERROR",
-            "logger_name": f"isolated-{period}",
-            "message": f"failure-{period}",
-        }],
-    )
     @patch("handlers.admin.get_admin_cart_rows", return_value=[])
-    def test_cart_and_error_reports_return_to_menu_without_extra_messages(
+    def test_cart_and_logs_menu_return_to_menu_without_extra_messages(
         self,
         get_admin_cart_rows,
-        get_error_logs,
-        analyze_error_logs,
     ):
         context = SimpleNamespace(user_data={"admin_mode": True})
         message = SimpleNamespace(
@@ -1307,44 +1269,6 @@ class AdminCartTests(unittest.TestCase):
         asyncio.run(journey())
 
         get_admin_cart_rows.assert_called_once_with()
-        self.assertCountEqual(
-            get_error_logs.call_args_list,
-            [
-                unittest.mock.call("today"),
-                unittest.mock.call("week"),
-                unittest.mock.call("hour"),
-                unittest.mock.call("quarter"),
-            ],
-        )
-        self.assertCountEqual(
-            analyze_error_logs.call_args_list,
-            [
-                unittest.mock.call([{
-                    "created_at": "2026-09-13 today",
-                    "level": "ERROR",
-                    "logger_name": "isolated-today",
-                    "message": "failure-today",
-                }], "اليوم"),
-                unittest.mock.call([{
-                    "created_at": "2026-09-13 week",
-                    "level": "ERROR",
-                    "logger_name": "isolated-week",
-                    "message": "failure-week",
-                }], "هذا الأسبوع"),
-                unittest.mock.call([{
-                    "created_at": "2026-09-13 hour",
-                    "level": "ERROR",
-                    "logger_name": "isolated-hour",
-                    "message": "failure-hour",
-                }], "آخر ساعة"),
-                unittest.mock.call([{
-                    "created_at": "2026-09-13 quarter",
-                    "level": "ERROR",
-                    "logger_name": "isolated-quarter",
-                    "message": "failure-quarter",
-                }], "آخر ربع ساعة"),
-            ],
-        )
         message.reply_text.assert_awaited_once_with(
             "اضغط على الزر الموافق لطلبك:",
             reply_markup=admin_menu_keyboard(),
@@ -2184,16 +2108,7 @@ class AdminCartTests(unittest.TestCase):
             reply_markup=None,
         )
 
-    @patch("handlers.admin.get_error_logs", side_effect=lambda period: [])
-    @patch(
-        "handlers.admin.analyze_error_logs",
-        side_effect=lambda logs, label: f"{label}-" + "x" * 5000,
-    )
-    def test_combined_logs_report_stays_in_one_message_with_four_periods_and_buttons(
-        self,
-        analyze_error_logs,
-        get_error_logs,
-    ):
+    def test_logs_report_shows_five_download_periods_without_analysis(self):
         message = SimpleNamespace(
             edit_text=AsyncMock(),
             reply_text=AsyncMock(),
@@ -2205,26 +2120,55 @@ class AdminCartTests(unittest.TestCase):
         report = message.edit_text.await_args.args[0]
         self.assertEqual(message.edit_text.await_count, 1)
         self.assertEqual(message.reply_text.await_count, 0)
-        self.assertLessEqual(len(report), TELEGRAM_MESSAGE_LIMIT)
-        for label in ("اليوم", "هذا الأسبوع", "آخر ساعة", "آخر ربع ساعة"):
-            self.assertIn(f"تقرير أخطاء {label}", report)
+        self.assertEqual(report, "اختر الفترة لتنزيل ملف سجلات Railway بصيغة JSON:")
         callbacks = [
             button.callback_data
             for row in message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
             for button in row
         ]
         self.assertEqual(
-            callbacks[:4],
+            callbacks[:5],
             [
-                "admin_logs_today",
-                "admin_logs_week",
+                "admin_logs_file_15m",
                 "admin_logs_file_hour",
-                "admin_logs_file_quarter",
+                "admin_logs_file_today",
+                "admin_logs_file_week",
+                "admin_logs_file_month",
             ],
         )
-        self.assertEqual(get_error_logs.call_count, 4)
-        self.assertEqual(analyze_error_logs.call_count, 4)
         self.assertIsNotNone(message.edit_text.await_args.kwargs["reply_markup"])
+
+    @patch(
+        "handlers.admin.fetch_railway_log_file",
+        new_callable=AsyncMock,
+        return_value=RailwayLogFile(
+            payload=b'{"logs":[]}',
+            count=0,
+            possibly_truncated=False,
+            max_lines=5000,
+        ),
+    )
+    def test_log_download_sends_json_document_and_keeps_period_buttons(
+        self,
+        fetch_logs,
+    ):
+        message = SimpleNamespace(
+            reply_document=AsyncMock(),
+            delete=AsyncMock(),
+            edit_text=AsyncMock(),
+            reply_text=AsyncMock(),
+        )
+
+        import asyncio
+        asyncio.run(send_logs_file(message, "month"))
+
+        fetch_logs.assert_awaited_once_with("month")
+        message.reply_document.assert_awaited_once()
+        kwargs = message.reply_document.await_args.kwargs
+        self.assertEqual(kwargs["filename"], "railway-logs-this-month.json")
+        self.assertEqual(kwargs["document"].getvalue(), b'{"logs":[]}')
+        self.assertIn("هذا الشهر", kwargs["caption"])
+        message.delete.assert_awaited_once_with()
 
     def test_ask_ai_button_leaves_admin_mode_and_enters_ai_mode(self):
         context = SimpleNamespace(

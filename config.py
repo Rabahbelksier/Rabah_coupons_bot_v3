@@ -12,14 +12,16 @@ def _optional_positive_int(name, default=None):
     return value if value > 0 else default
 
 
-_ERROR_LOG_MIN_RETENTION_DAYS = 7
-ERROR_LOG_RETENTION_DAYS = max(
-    _optional_positive_int('ERROR_LOG_RETENTION_DAYS', 30),
-    _ERROR_LOG_MIN_RETENTION_DAYS,
-)
-ERROR_LOG_CLEANUP_INTERVAL_SECONDS = _optional_positive_int(
-    'ERROR_LOG_CLEANUP_INTERVAL_SECONDS',
-    60 * 60,
+RAILWAY_CLI_PATH = os.getenv('RAILWAY_CLI_PATH', 'railway').strip() or 'railway'
+RAILWAY_LOGS_PROJECT_ID = os.getenv('RAILWAY_LOGS_PROJECT_ID', '').strip()
+RAILWAY_LOGS_ENVIRONMENT_ID = os.getenv(
+    'RAILWAY_LOGS_ENVIRONMENT_ID', ''
+).strip()
+RAILWAY_LOGS_SERVICE_ID = os.getenv('RAILWAY_LOGS_SERVICE_ID', '').strip()
+RAILWAY_LOGS_MAX_LINES = _optional_positive_int('RAILWAY_LOGS_MAX_LINES', 5000)
+RAILWAY_LOGS_TIMEOUT_SECONDS = _optional_positive_int(
+    'RAILWAY_LOGS_TIMEOUT_SECONDS',
+    60,
 )
 
 APP_KEY = os.getenv('APP_KEY') or os.getenv('ALIEXPRESS_APP_KEY')

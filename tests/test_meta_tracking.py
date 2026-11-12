@@ -438,7 +438,6 @@ class MetaMainWiringTests(unittest.TestCase):
         # changing Telegram webhooks, or starting another Telegram worker.
         with (
             patch("core.db.init_db"),
-            patch("utils.error_logging.install_error_log_handler"),
             patch("services.telegram_runtime.TelegramRuntime.ensure_ready"),
             patch.object(tracking.config, "PUBLIC_URL", ""),
             patch.object(tracking.config, "META_TRACKING_ENABLED", False),

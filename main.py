@@ -16,12 +16,11 @@ from telegram.ext import (
 
 from config import (
     CHANNEL_MONITOR_ENABLED,
-    ERROR_LOG_CLEANUP_INTERVAL_SECONDS,
     PUBLIC_URL,
     TOKEN,
     PORT,
 )
-from core.db import delete_expired_error_logs, init_db
+from core.db import init_db
 from handlers.help import (
     help_command,
     help_topic_callback,
@@ -60,7 +59,6 @@ from services.channel_monitor import ChannelMonitor
 from services.auto_publisher import AutoPublisher
 from services.cart_price_updater import cart_price_updater
 from services.telegram_runtime import TelegramRuntime
-from utils.error_logging import install_error_log_handler
 from utils.observability import configure_console_logging, observed
 
 configure_console_logging()
@@ -188,24 +186,6 @@ async def _start_auto_publisher(application):
     await auto_publisher.start(application)
 
 
-async def _cleanup_error_logs_loop():
-    """Prune old persisted errors without depending on channel monitoring."""
-    while True:
-        try:
-            deleted_rows = await asyncio.to_thread(delete_expired_error_logs)
-            if deleted_rows:
-                logger.info(
-                    "Deleted %d error log(s) older than the retention window",
-                    deleted_rows,
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # A cleanup outage must not affect error recording or bot requests.
-            logger.exception("Error log cleanup failed")
-        await asyncio.sleep(ERROR_LOG_CLEANUP_INTERVAL_SECONDS)
-
-
 def _stop_background_services():
     _webhook_refresh_stop.set()
     try:
@@ -276,12 +256,6 @@ def _on_telegram_ready(application):
         _start_auto_publisher(application),
         "Automatic channel publisher startup",
     )
-    _schedule_background(
-        _cleanup_error_logs_loop(),
-        "Error log cleanup",
-    )
-
-
 _runtime = TelegramRuntime(
     _build_telegram_app,
     _on_telegram_ready,
@@ -386,7 +360,6 @@ def _start_webhook_refresh():
 
 
 init_db()
-install_error_log_handler()
 set_webhook()
 atexit.register(_stop_background_services)
 _ensure_ready()

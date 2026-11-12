@@ -15,7 +15,6 @@ from core.db import (
     get_activity_stats,
     get_admin_cart_rows,
     get_auto_publish_report,
-    get_error_logs,
     get_channel_queue_status,
     get_user_chat_ids,
     get_total_user_count,
@@ -25,7 +24,6 @@ from core.db import (
     update_cart_row,
 )
 from core.ai import (
-    analyze_error_logs,
     get_ai_service_status,
     set_ai_provider_enabled,
 )
@@ -43,6 +41,11 @@ from handlers.ai_search import (
     _clear_ai_search_state,
     _hide_saved_offers_reply_keyboard,
     ai_search_reply_keyboard,
+)
+from services.railway_logs import (
+    LOG_PERIODS,
+    RailwayLogsError,
+    fetch_railway_log_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,7 +65,7 @@ ADMIN_CALLBACK_PATTERN = (
     r"(?:_(?:enable|disable|report|today|yesterday|thisweek|lastweek|"
     r"month|previous|week|year|lastyear|all|hour|quarter|"
     r"manual|auto|addbutton|send|back))?"
-    r"|admin_logs_file_(?:hour|quarter)"
+    r"|admin_logs_file_(?:15m|hour|today|week|month|quarter)"
     r"|admin_(?:edit|add|exit)(?:_[0-9]+)?"
     r")$"
 )
@@ -390,56 +393,32 @@ def activity_keyboard():
 def logs_keyboard():
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("logs اليوم", callback_data="admin_logs_today"),
-            InlineKeyboardButton("logs هذا الأسبوع", callback_data="admin_logs_week"),
+            InlineKeyboardButton(
+                "تنزيل آخر 15 دقيقة",
+                callback_data="admin_logs_file_15m",
+            ),
+            InlineKeyboardButton(
+                "تنزيل آخر ساعة",
+                callback_data="admin_logs_file_hour",
+            ),
         ],
         [
             InlineKeyboardButton(
-                "logs آخر ساعة",
-                callback_data="admin_logs_file_hour",
+                "تنزيل اليوم",
+                callback_data="admin_logs_file_today",
             ),
             InlineKeyboardButton(
-                "logs آخر ربع ساعة",
-                callback_data="admin_logs_file_quarter",
+                "تنزيل آخر أسبوع",
+                callback_data="admin_logs_file_week",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "تنزيل هذا الشهر",
+                callback_data="admin_logs_file_month",
             ),
         ],
         [InlineKeyboardButton("العودة للقائمة", callback_data="admin_menu")],
-    ])
-
-
-_LOG_PERIOD_LABELS = {
-    "today": "اليوم",
-    "week": "هذا الأسبوع",
-    "hour": "آخر ساعة",
-    "quarter": "آخر ربع ساعة",
-}
-_LOG_PERIOD_WINDOWS = {
-    "today": "آخر 24 ساعة",
-    "week": "آخر 7 أيام",
-    "hour": "آخر 60 دقيقة",
-    "quarter": "آخر 15 دقيقة",
-}
-_LOG_FILE_LABELS = {
-    "today": "today",
-    "week": "week",
-    "hour": "last-hour",
-    "quarter": "last-15-minutes",
-}
-
-
-def short_logs_report_keyboard(period):
-    label = _LOG_PERIOD_LABELS[period]
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                f"تحميل logs {label}",
-                callback_data=f"admin_logs_file_{period}",
-            ),
-        ],
-        [
-            InlineKeyboardButton("العودة إلى تقارير الأخطاء", callback_data="admin_logs"),
-            InlineKeyboardButton("العودة للقائمة", callback_data="admin_menu"),
-        ],
     ])
 
 
@@ -1081,115 +1060,65 @@ async def send_activity_report(message, period, *, edit=False):
     )
 
 
-def _format_error_log_file(logs):
-    if not logs:
-        return "لا توجد أخطاء مسجلة في هذه الفترة.\n"
-    return "\n\n".join(
-        f"[{item['created_at']}] {item['level']} {item['logger_name']}\n"
-        f"{item['message']}"
-        for item in logs
-    ) + "\n"
-
-
-def _format_error_period_report(period, logs, analysis):
-    label = _LOG_PERIOD_LABELS[period]
-    window = _LOG_PERIOD_WINDOWS[period]
-    return (
-        f"━━ تقرير أخطاء {label} ━━\n"
-        f"الفترة: {window}\n"
-        f"عدد الأخطاء: {len(logs)}\n\n"
-        f"{analysis}"
-    )
-
-
-def _compact_error_analysis(analysis, limit=600):
-    """Keep one period's summary readable while fitting four periods in one message."""
-    analysis = str(analysis or "").strip()
-    if len(analysis) <= limit:
-        return analysis
-    lines = []
-    current_length = 0
-    for line in analysis.splitlines():
-        line = line.rstrip()
-        if not line:
-            continue
-        extra_length = len(line) + (1 if lines else 0)
-        if current_length + extra_length > limit - 24:
-            break
-        lines.append(line)
-        current_length += extra_length
-    compact = "\n".join(lines).strip()
-    return (compact or analysis[:limit - 1].rstrip()) + "\n…"
-
-
 async def send_logs_report(message, period=None, *, edit=False):
-    if period:
-        logs = await asyncio.to_thread(get_error_logs, period)
-        label = _LOG_PERIOD_LABELS[period]
-        analysis = await asyncio.to_thread(analyze_error_logs, logs, label)
-        await _render_admin_message(
-            message,
-            _format_error_period_report(period, logs, analysis),
-            reply_markup=(
-                short_logs_report_keyboard(period)
-                if period in {"hour", "quarter"}
-                else logs_keyboard()
-            ),
-            edit=edit,
-        )
-        return
-    periods = ("today", "week", "hour", "quarter")
-    logs_values = await asyncio.gather(*(
-        asyncio.to_thread(get_error_logs, period)
-        for period in periods
-    ))
-    logs_by_period = dict(zip(periods, logs_values))
-    analysis_values = await asyncio.gather(*(
-        asyncio.to_thread(
-            analyze_error_logs,
-            logs_by_period[period],
-            _LOG_PERIOD_LABELS[period],
-        )
-        for period in periods
-    ))
-    analysis_by_period = dict(zip(periods, analysis_values))
-    reports = [
-        _format_error_period_report(
-            period,
-            logs_by_period[period],
-            _compact_error_analysis(analysis_by_period[period]),
-        )
-        for period in periods
-    ]
-    report = (
-        "تقرير أخطاء الخادم\n\n"
-        + "\n\n".join(reports)
-        + "\n\nاستخدم أزرار logs لتحميل الفترة كاملة:"
-    )
-    # The per-period cap keeps this specific report in one Telegram message.
     await _render_admin_message(
         message,
-        report[:TELEGRAM_MESSAGE_LIMIT],
+        "اختر الفترة لتنزيل ملف سجلات Railway بصيغة JSON:",
         reply_markup=logs_keyboard(),
         edit=edit,
     )
 
 
 async def send_logs_file(message, period):
-    logs = await asyncio.to_thread(get_error_logs, period)
-    file_label = _LOG_FILE_LABELS[period]
-    label = _LOG_PERIOD_LABELS[period]
-    payload = _format_error_log_file(logs).encode("utf-8")
+    if period == "quarter":
+        period = "15m"
+    if period not in LOG_PERIODS:
+        await _render_admin_message(
+            message,
+            "الفترة المطلوبة غير صالحة.",
+            reply_markup=logs_keyboard(),
+            edit=True,
+        )
+        return
+    period_info = LOG_PERIODS[period]
+    try:
+        log_file = await fetch_railway_log_file(period)
+    except RailwayLogsError as exc:
+        logger.warning("Railway log download failed: %s", exc)
+        await _render_admin_message(
+            message,
+            "تعذر جلب ملف السجلات من Railway. تحقق من إعداد CLI "
+            "ومتغيرات Railway ثم حاول مجددًا.",
+            reply_markup=logs_keyboard(),
+            edit=True,
+        )
+        return
+
+    caption = f"سجلات Railway: {period_info['label']} — {log_file.count} سجل"
+    if log_file.possibly_truncated:
+        caption += (
+            f"\nقد يكون الملف مقتصرًا على آخر {log_file.max_lines} سجل."
+        )
+    try:
+        await message.reply_document(
+            document=io.BytesIO(log_file.payload),
+            filename=f"railway-logs-{period_info['filename']}.json",
+            caption=caption,
+            reply_markup=logs_keyboard(),
+        )
+    except Exception:
+        logger.exception("Could not send Railway logs document")
+        await _render_admin_message(
+            message,
+            "تم جلب السجلات، لكن تعذر إرسال الملف عبر Telegram.",
+            reply_markup=logs_keyboard(),
+            edit=True,
+        )
+        return
     try:
         await message.delete()
     except Exception:
-        logger.debug("Could not replace logs report with file", exc_info=True)
-    await message.reply_document(
-        document=io.BytesIO(payload),
-        filename=f"server-logs-{file_label}.txt",
-        caption=f"ملف logs {label}",
-        reply_markup=logs_keyboard(),
-    )
+        logger.debug("Could not remove the Railway logs menu", exc_info=True)
 
 
 def _parse_cart_line(text):
@@ -1727,12 +1656,21 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "week",
             "hour",
             "quarter",
+            "15m",
+            "month",
         }:
             await send_logs_file(query.message, action_parts[2])
         elif (
             len(action_parts) == 4
             and action_parts[2] == "file"
-            and action_parts[3] in {"hour", "quarter"}
+            and action_parts[3] in {
+                "15m",
+                "hour",
+                "today",
+                "week",
+                "month",
+                "quarter",
+            }
         ):
             await send_logs_file(query.message, action_parts[3])
         return

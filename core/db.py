@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
 import psycopg2
-from config import CHANNEL_AI_BATCH_SIZE, DATABASE_URL, ERROR_LOG_RETENTION_DAYS
+from config import CHANNEL_AI_BATCH_SIZE, DATABASE_URL
 from core.categories import (
     SAVED_OFFER_CATEGORY_COLUMN_FILTERS,
     category_from_aliexpress_names,
@@ -245,19 +245,6 @@ def init_db():
             FROM user_bot
             WHERE activity_day = CURRENT_DATE AND requests_today > 0
             ON CONFLICT (chat_id, activity_day) DO NOTHING
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS bot_error_logs (
-                id BIGSERIAL PRIMARY KEY,
-                level TEXT NOT NULL,
-                logger_name TEXT,
-                message TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_bot_error_logs_created_at
-            ON bot_error_logs (created_at DESC)
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS bot_feature_settings (
@@ -3415,99 +3402,6 @@ def delete_user_chat_ids(chat_ids):
             conn.close()
 
 
-def add_error_log(level, logger_name, message):
-    """Persist a formatted server error without allowing logging to recurse."""
-    if not DATABASE_URL:
-        return
-    conn = None
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO bot_error_logs (level, logger_name, message)
-                VALUES (%s, %s, %s)
-                """,
-                (str(level)[:20], str(logger_name)[:250], str(message)[:12000]),
-            )
-        conn.commit()
-    except Exception:
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            conn.close()
-
-
-def delete_expired_error_logs(retention_days=None):
-    """Delete error records older than the configured admin-report retention."""
-    if not DATABASE_URL:
-        return 0
-
-    retention_days = (
-        ERROR_LOG_RETENTION_DAYS
-        if retention_days is None
-        else max(1, int(retention_days))
-    )
-    conn = None
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                DELETE FROM bot_error_logs
-                WHERE created_at < CURRENT_TIMESTAMP
-                    - (%s * INTERVAL '1 day')
-                """,
-                (retention_days,),
-            )
-            deleted_rows = cursor.rowcount
-        conn.commit()
-        return deleted_rows
-    except Exception:
-        if conn:
-            conn.rollback()
-        raise
-    finally:
-        if conn:
-            conn.close()
-
-
-def get_error_logs(period):
-    """Return persisted errors for the requested period."""
-    interval = {
-        "today": "1 day",
-        "week": "7 days",
-        "hour": "1 hour",
-        "quarter": "15 minutes",
-    }.get(period)
-    if not interval or not DATABASE_URL:
-        return []
-    conn = None
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT level, logger_name, message, created_at
-                FROM bot_error_logs
-                WHERE created_at >= CURRENT_TIMESTAMP - %s::interval
-                ORDER BY created_at DESC
-                """,
-                (interval,),
-            )
-            return [
-                {
-                    "level": row[0],
-                    "logger_name": row[1],
-                    "message": row[2],
-                    "created_at": row[3],
-                }
-                for row in cursor.fetchall()
-            ]
-    finally:
-        if conn:
-            conn.close()
 
 
 def get_admin_cart_row(row_id):

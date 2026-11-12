@@ -174,10 +174,12 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
   successive searches and exits when the user sends an AliExpress URL.
 - A maintenance task removes `statu` rows older than three days once per hour. Source
   photo downloads attempt to reconnect the MTProto client when it is disconnected.
-- `bot_error_logs` keeps the last 30 days by default. The retention is configurable
-  with `ERROR_LOG_RETENTION_DAYS` (minimum seven days to preserve the admin week
-  report), and `ERROR_LOG_CLEANUP_INTERVAL_SECONDS` controls the hourly cleanup
-  interval. Cleanup runs independently of channel monitoring.
+- Admin log downloads come directly from Railway CLI as JSON files, for the last
+  15 minutes, hour, 24 hours, seven days, or current calendar month. Set a
+  project-scoped `RAILWAY_TOKEN` and `RAILWAY_LOGS_PROJECT_ID`,
+  `RAILWAY_LOGS_ENVIRONMENT_ID`, and `RAILWAY_LOGS_SERVICE_ID` on the Railway
+  service. Existing `bot_error_logs` rows are left untouched; the app no longer
+  writes to or queries that table.
 - If `TELEGRAM_SESSION_STRING` is not available yet, run
   `python scripts/create_telegram_session.py` after setting `TELEGRAM_API_ID` and
   `TELEGRAM_API_HASH`; complete the one-time Telegram login, then copy the generated
