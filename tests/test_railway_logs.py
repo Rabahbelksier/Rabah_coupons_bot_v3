@@ -3,7 +3,7 @@ import json
 import os
 import unittest
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from services import railway_logs
@@ -34,6 +34,46 @@ class RailwayLogParsingTests(unittest.TestCase):
             railway_logs._month_start_utc(now),
             "2026-10-31T23:00:00Z",
         )
+        start, end = railway_logs._period_range("month", now)
+        self.assertEqual(start, "2026-10-31T23:00:00Z")
+        self.assertEqual(end, "2026-11-12T12:00:00Z")
+
+    def test_selects_deployments_covering_a_range_and_previous_success(self):
+        start = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 11, 10, tzinfo=timezone.utc)
+        deployments = [
+            {
+                "id": "old-success",
+                "status": "SUCCESS",
+                "createdAt": "2026-10-20T00:00:00Z",
+            },
+            {
+                "id": "previous-crashed",
+                "status": "CRASHED",
+                "createdAt": "2026-10-30T00:00:00Z",
+            },
+            {
+                "id": "inside-range",
+                "status": "SUCCESS",
+                "createdAt": "2026-11-05T00:00:00Z",
+            },
+            {
+                "id": "after-range",
+                "status": "SUCCESS",
+                "createdAt": "2026-11-11T00:00:00Z",
+            },
+        ]
+
+        selected = railway_logs._select_relevant_deployments(
+            deployments,
+            start,
+            end,
+        )
+
+        self.assertEqual(
+            [deployment_id for _, deployment_id, _ in selected],
+            ["inside-range", "previous-crashed", "old-success"],
+        )
 
 
 class RailwayLogFetchTests(unittest.TestCase):
@@ -58,12 +98,28 @@ class RailwayLogFetchTests(unittest.TestCase):
         )
 
     def test_fetches_cli_json_and_builds_valid_json_file(self):
-        process = AsyncMock()
-        process.returncode = 0
-        process.communicate.return_value = (
-            b'{"timestamp":"2026-11-12T10:00:00Z","message":"failure"}\n',
-            b"",
-        )
+        deployment_created = (
+            datetime.now(timezone.utc) - timedelta(days=2)
+        ).isoformat().replace("+00:00", "Z")
+
+        def process_for_output(stdout):
+            process = unittest.mock.MagicMock()
+            process.returncode = 0
+            process.communicate = AsyncMock(return_value=(stdout, b""))
+            return process
+
+        async def create_subprocess(*command, **_kwargs):
+            if "link" in command:
+                return process_for_output(b"")
+            if "deployment" in command:
+                return process_for_output(json.dumps([{
+                    "id": "deployment-current",
+                    "status": "SUCCESS",
+                    "createdAt": deployment_created,
+                }]).encode())
+            return process_for_output(
+                b'{"timestamp":"2026-11-12T10:00:00Z","message":"failure"}\n'
+            )
 
         patches = self._set_railway_settings()
         with ExitStack() as stack:
@@ -79,7 +135,7 @@ class RailwayLogFetchTests(unittest.TestCase):
             create_process = stack.enter_context(
                 patch(
                     "services.railway_logs.asyncio.create_subprocess_exec",
-                    new=AsyncMock(return_value=process),
+                    new=AsyncMock(side_effect=create_subprocess),
                 )
             )
             for patcher in patches:
@@ -91,15 +147,22 @@ class RailwayLogFetchTests(unittest.TestCase):
         self.assertEqual(document["period_label"], "آخر 15 دقيقة")
         self.assertEqual(document["record_count"], 1)
         self.assertEqual(document["logs"][0]["message"], "failure")
+        self.assertEqual(
+            document["logs"][0]["deploymentId"],
+            "deployment-current",
+        )
         self.assertFalse(log_file.possibly_truncated)
-        command = create_process.await_args.args
-        self.assertEqual(command[0], "/bin/railway")
-        self.assertIn("--json", command)
-        self.assertIn("--since", command)
-        self.assertIn("15m", command)
-        self.assertIn("--project", command)
-        self.assertIn("project-id", command)
-        self.assertNotIn("test-token", command)
+        self.assertEqual(create_process.await_count, 3)
+        log_command = create_process.await_args.args
+        self.assertEqual(log_command[0], "/bin/railway")
+        self.assertEqual(log_command[1], "logs")
+        self.assertEqual(log_command[2], "deployment-current")
+        self.assertIn("--json", log_command)
+        self.assertIn("--since", log_command)
+        self.assertIn("--until", log_command)
+        self.assertIn("--project", log_command)
+        self.assertIn("project-id", log_command)
+        self.assertNotIn("test-token", log_command)
 
     def test_missing_token_fails_before_starting_cli(self):
         patches = self._set_railway_settings()
@@ -121,9 +184,25 @@ class RailwayLogFetchTests(unittest.TestCase):
         create_process.assert_not_awaited()
 
     def test_legacy_quarter_alias_uses_fifteen_minute_period(self):
-        process = AsyncMock()
-        process.returncode = 0
-        process.communicate.return_value = (b"", b"")
+        deployment_created = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat().replace("+00:00", "Z")
+
+        def process_for_output(stdout):
+            process = unittest.mock.MagicMock()
+            process.returncode = 0
+            process.communicate = AsyncMock(return_value=(stdout, b""))
+            return process
+
+        async def create_subprocess(*command, **_kwargs):
+            if "deployment" in command:
+                return process_for_output(json.dumps([{
+                    "id": "deployment-current",
+                    "status": "SUCCESS",
+                    "createdAt": deployment_created,
+                }]).encode())
+            return process_for_output(b"")
+
         patches = self._set_railway_settings()
         with ExitStack() as stack:
             stack.enter_context(
@@ -138,7 +217,7 @@ class RailwayLogFetchTests(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "services.railway_logs.asyncio.create_subprocess_exec",
-                    new=AsyncMock(return_value=process),
+                    new=AsyncMock(side_effect=create_subprocess),
                 )
             )
             for patcher in patches:
