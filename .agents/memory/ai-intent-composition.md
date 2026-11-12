@@ -38,3 +38,9 @@ For category searches, saved or typed, and broad brand-only searches, choose the
 **Why:** The user asked for saved category buttons and typed category or brand requests to prioritize frequently posted products, and for the saved-offers prominent button to match typed prominent searches, without changing which offer represents each product or disturbing other request types.
 
 **How to apply:** Apply the same matching filters before counting occurrences and selecting the newest qualifying post per product. Use frequency for category searches, brand-only searches, and explicit prominent-offer requests from either text or saved buttons. Keep generic unfiltered searches on their current price ordering, near-price searches by target distance, and specific model/product searches on their current intent-specific ordering.
+
+For DeepSeek, map explicit saved-offer category requests to the exact allowlisted button keys; a product request keeps its cached phrase alternatives and may add a confidently identified saved-offer group as an independent filter. Do not apply an inferred legacy `category` unless the user explicitly requested it. Closed-vocabulary phrases must remain complete through cache validation and normalization, including phrases longer than 100 characters.
+
+**Why:** A live DeepSeek search classified a specific inflator as a category-only request, and a separate exact-match path truncated a long cached title phrase before validating it; both errors suppressed real processed offers.
+
+**How to apply:** Keep the 17 saved-offer groups separate from legacy and AliExpress taxonomies, keep product phrases in their OR group, and pass complete cache strings through each closed-vocabulary filtering step. Leave price, shipping, specifications, and offer-type filters intact.

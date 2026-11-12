@@ -1933,6 +1933,7 @@ def search_channel_posts(intent, limit=None):
             or intent.get("saved_category")
             or intent.get("saved_categories")
             or intent.get("saved_subcategory")
+            or intent.get("saved_subcategories")
             or intent.get("official_category")
             or intent.get("official_categories")
             or _infer_category(None, keywords)
@@ -2350,12 +2351,15 @@ def _frequency_order_requested(intent):
             or intent.get("official_categories")
             or intent.get("saved_category")
             or intent.get("saved_categories")
+            or intent.get("saved_subcategory")
+            or intent.get("saved_subcategories")
         )
 
     if request_type == "trending" and (
         intent.get("saved_category")
         or intent.get("saved_categories")
         or intent.get("saved_subcategory")
+        or intent.get("saved_subcategories")
     ):
         return True
 
@@ -2902,6 +2906,11 @@ def _official_categories_match(post, requested_categories):
 def _saved_subcategory_matches(post, requested_subcategory):
     if not requested_subcategory:
         return True
+    if isinstance(requested_subcategory, (list, tuple, set)):
+        return any(
+            _saved_subcategory_matches(post, subcategory)
+            for subcategory in requested_subcategory
+        )
     if (
         requested_subcategory == "saved_electronics"
         and str(post.get("category") or "").casefold().strip()

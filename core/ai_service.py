@@ -726,9 +726,13 @@ class _CallableProvider:
                         "من قاموس رسمي مستقل. إذا كان الطلب بحثًا صالحًا عن "
                         "فئة غير ممثلة بمفتاح داخلي، استخدم نوع category "
                         "المناسب وcategory=other عند الحاجة، ولا تستخدم other "
-                        "إلا مع هذا القيد الصريح. أبقِ الطلبات غير البحثية "
-                        "unsupported. هذا هو المفتاح الإضافي الوحيد المسموح "
-                        "في نتيجة هذا الطلب."
+                        "إلا مع هذا القيد الصريح. أعد saved_* فقط بالمفاتيح "
+                        "الموجودة في سياق DeepSeek؛ الفئة الرئيسية مع المنتج "
+                        "قيد AND إضافي ولا تحذف كلمات المنتج. category "
+                        "استنتاج الاستخدام لا يصبح قيدًا على product_* إلا "
+                        "عند category_filter_requested=true. أبقِ الطلبات "
+                        "غير البحثية unsupported. لا تضف مفاتيح خارج مخطط "
+                        "النتيجة."
                     )
                 return self._callable(request_prompt, context=context)
             return self._callable(prompt)

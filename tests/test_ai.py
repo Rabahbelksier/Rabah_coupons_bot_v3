@@ -20,6 +20,7 @@ from core.ai import (
     _gemini_keyword_cache_state_hash,
     _gemini_keyword_cache_context,
     _normalize_official_categories,
+    _normalize_user_request_result,
     _restrict_gemini_keywords_to_snapshot,
     _match_user_categories_in_gemini_cache,
     _channel_analysis_prompt,
@@ -1774,6 +1775,117 @@ class AiParsingTests(unittest.TestCase):
         self.assertIn("category_filter_requested", context["system_prompt"])
         self.assertNotIn("cachedContent", context["system_prompt"])
         load_snapshot.assert_called_once_with()
+
+    @patch(
+        "core.ai.get_gemini_keyword_cache_snapshot",
+        return_value={"keywords": ["Baseus Wireless Car Air Pump"]},
+    )
+    def test_deepseek_user_context_exposes_saved_offer_category_buttons(
+        self,
+        load_snapshot,
+    ):
+        context = _deepseek_request_context("user")
+        allowed = context["allowed_saved_offer_categories"]
+
+        self.assertEqual(len(allowed), 17)
+        self.assertEqual(
+            {entry["key"] for entry in allowed},
+            {
+                "saved_phones",
+                "saved_tablets",
+                "saved_electronics",
+                "saved_computer",
+                "smart_watches",
+                "bluetooth_headphones",
+                "saved_sports",
+                "saved_home",
+                "saved_children",
+                "saved_fashion",
+                "saved_accessories",
+                "saved_beauty",
+                "saved_vehicles",
+                "saved_tools",
+                "saved_miscellaneous",
+                "saved_spare_parts",
+                "saved_electronic_supplies",
+            },
+        )
+        vehicles = next(
+            entry for entry in allowed if entry["key"] == "saved_vehicles"
+        )
+        self.assertEqual(vehicles["intent_field"], "saved_subcategory")
+        self.assertIn("car", vehicles["official_subcategory_hints"])
+        self.assertIn("الفئات الرئيسية السبعة عشر", context["system_prompt"])
+        self.assertIn("لا تضع category=accessories", context["system_prompt"])
+        self.assertIn("هو جهاز نفخ محدد", context["system_prompt"])
+        load_snapshot.assert_called_once_with()
+
+    def test_deepseek_saved_offer_category_is_validated_and_required_for_category_search(self):
+        result = _normalize_user_request_result(
+            {
+                "request_type": "category_cheapest",
+                "keywords": [],
+                "category": None,
+                "saved_subcategory": "saved_vehicles",
+                "saved_subcategories": ["bogus_key"],
+                "min_price": None,
+                "max_price": None,
+            },
+            "أرخص عروض المركبات",
+            allow_local_fallback=False,
+            ai_provider="DeepSeek",
+        )
+
+        self.assertEqual(result["request_type"], "category_cheapest")
+        self.assertEqual(result["saved_subcategory"], "saved_vehicles")
+        self.assertNotIn("saved_subcategories", result)
+        self.assertIsNone(result["category"])
+
+    @patch("core.ai._call_ai")
+    def test_deepseek_product_keeps_saved_group_and_drops_guessed_accessories(
+        self, call_ai,
+    ):
+        phrase = (
+            "Baseus Wireless Car Air Pump Portable Air Compressor for Car "
+            "Motorcycles Bicycle Electric Tire Inflator with LCD Digital Display"
+        )
+        primary = AIResponse(
+            {
+                "canonical_request": "عروض جهاز نفخ عجلات السيارات",
+                "request_type": "product_best",
+                "keywords": [phrase],
+                "keyword_groups": [[phrase]],
+                "category": "accessories",
+                "saved_subcategory": "saved_vehicles",
+                "max_price": 40,
+                "price_mode": "below",
+                "shipping_country": "France",
+                # Missing category_filter_requested reproduces DeepSeek's
+                # earlier response; absence must not preserve a guessed filter.
+            },
+            provider="DeepSeek",
+        )
+        primary.keyword_cache_active = True
+        primary.keyword_cache_keywords = [phrase]
+        semantic = AIResponse(
+            {"keywords": [phrase], "keyword_groups": [[phrase]]},
+            provider="DeepSeek",
+        )
+        semantic.keyword_cache_active = True
+        semantic.keyword_cache_keywords = [phrase]
+        call_ai.side_effect = [primary, semantic]
+
+        result = parse_user_request("اريد عروض جهاز نفخ عجلات السيارات")
+
+        self.assertEqual(call_ai.call_count, 2)
+        self.assertEqual(result["request_type"], "product_best")
+        self.assertEqual(result["saved_subcategory"], "saved_vehicles")
+        self.assertIsNone(result["category"])
+        self.assertNotIn("official_categories", result)
+        self.assertIn(phrase, result["keyword_groups"][0])
+        self.assertIn(phrase, result["keywords"])
+        self.assertEqual(result["max_price"], 40)
+        self.assertEqual(result["shipping_country"], "France")
 
     def test_deepseek_category_context_uses_official_names_without_gemini_cache(
         self,

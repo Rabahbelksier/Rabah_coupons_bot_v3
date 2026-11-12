@@ -2684,6 +2684,62 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DatabaseSearchTests(unittest.TestCase):
+    def test_vehicle_saved_group_combines_with_specific_product_keywords(self):
+        title = (
+            "Baseus Wireless Car Air Pump 4000mAh LCD Digital"
+        )
+        post = {
+            "title": title,
+            "category": "other",
+            "first_level_category_name": "Automobiles & Motorcycles",
+            "second_level_category_name": "Car Wash & Maintenance",
+            "price": 34.23,
+        }
+        intent = {
+            "request_type": "product_best",
+            "keywords": [title],
+            "keyword_groups": [[title]],
+            "saved_subcategory": "saved_vehicles",
+        }
+
+        self.assertIsNotNone(
+            db._post_match_score(post, intent, [title])
+        )
+        self.assertIsNone(
+            db._post_match_score(
+                post,
+                {**intent, "saved_subcategory": "saved_accessories"},
+                [title],
+            )
+        )
+        self.assertIsNone(
+            db._post_match_score(
+                post,
+                {**intent, "category": "accessories"},
+                [title],
+            )
+        )
+
+    def test_saved_subcategory_alternatives_match_any_selected_group(self):
+        post = {
+            "title": "Air pump",
+            "category": "other",
+            "second_level_category_name": "Car Wash & Maintenance",
+        }
+
+        self.assertTrue(
+            db._saved_subcategory_matches(
+                post,
+                ["saved_home", "saved_vehicles"],
+            )
+        )
+        self.assertFalse(
+            db._saved_subcategory_matches(
+                post,
+                ["saved_home", "saved_computer"],
+            )
+        )
+
     def test_shipping_country_aliases_match_whole_tokens_only(self):
         self.assertTrue(
             db._shipping_country_matches(

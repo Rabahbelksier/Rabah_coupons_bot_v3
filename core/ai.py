@@ -21,6 +21,11 @@ from config import (
     GEMINI_MODEL,
 )
 from core.categories import (
+    SAVED_OFFER_CATEGORY_COLUMN_FILTERS,
+    SAVED_OFFER_CATEGORY_FILTERS,
+    SAVED_OFFER_CATEGORY_GROUPS_BY_KEY,
+    SAVED_OFFER_CATEGORY_SUBCATEGORY_NAMES,
+    SAVED_OFFER_SUBCATEGORY_PATTERNS,
     SPECIAL_CATEGORY_BLUETOOTH_HEADPHONES,
     SPECIAL_CATEGORY_SMART_WATCHES,
     SAVED_OFFER_PROVIDER_SUBCATEGORY_NAMES,
@@ -614,6 +619,59 @@ def _deepseek_request_context(request_kind):
             "المستخدم صراحةً فئة أو نوعًا من العروض؛ خلاف ذلك false. لا "
             "تستخدم اسم الفئة ككلمة منتج.",
         ])
+        saved_offer_categories = []
+        for key, label in SAVED_OFFER_CATEGORY_FILTERS:
+            if key in SAVED_OFFER_CATEGORY_COLUMN_FILTERS:
+                saved_offer_categories.append({
+                    "key": key,
+                    "label": label,
+                    "intent_field": "saved_category",
+                    "match": "internal category column",
+                })
+                continue
+            saved_offer_categories.append({
+                "key": key,
+                "label": label,
+                "intent_field": "saved_subcategory",
+                "official_subcategory_hints": list(
+                    SAVED_OFFER_CATEGORY_GROUPS_BY_KEY.get(key)
+                    or SAVED_OFFER_SUBCATEGORY_PATTERNS.get(key)
+                    or ()
+                ),
+                "exact_subcategory_names": list(
+                    SAVED_OFFER_CATEGORY_SUBCATEGORY_NAMES.get(key) or ()
+                ),
+            })
+        context["allowed_saved_offer_categories"] = saved_offer_categories
+        system_parts.extend([
+            "فئات «عروض AI المحفوظة» مغلقة: استخدم مفاتيحها الدقيقة فقط "
+            "في الحقول المحددة؛ لا تضع هذه المفاتيح في category. للفئات "
+            "العامة استخدم saved_subcategory أو saved_subcategories، "
+            "وللساعات الذكية وسماعات البلوتوث استخدم saved_category أو "
+            "saved_categories. هذه مفاتيح مطابقة العروض نفسها، وليست أسماء "
+            "AliExpress الرسمية.\n"
+            "قاموس الفئات الرئيسية السبعة عشر بصيغة JSON:\n"
+            + json.dumps(saved_offer_categories, ensure_ascii=False),
+            "ميّز فئة العرض التي اختارها المستخدم عن اسم نوع المنتج: إذا "
+            "طلب فئة رئيسية من القاموس، أرفق مفتاحها. وإذا طلب منتجًا "
+            "محددًا أو نوع منتج عام داخل فئة رئيسية واضحة، احتفظ بعبارات "
+            "المنتج في keywords وkeyword_groups، وأرفق مفتاح مجموعة "
+            "العروض المحفوظة المناسبة فقط إذا كانت المطابقة واثقة؛ المنتج "
+            "ومجموعة عروضه شرطان متزامنان. لا تستبدل كلمات المنتج بالفئة. "
+            "إن لم توجد مجموعة واضحة فاتركها فارغة، ولا تخمّن فئة واسعة "
+            "غير مناسبة.",
+            "الجهاز أو الأداة ذات الوظيفة المسماة، حتى دون علامة أو موديل، "
+            "طلب منتج product_* وليس طلب فئة category_*: مثال «عروض جهاز "
+            "نفخ عجلات السيارات» هو جهاز نفخ محدد، وليس طلب كل عروض فئة "
+            "المركبات. اختر له عبارات القاموس مثل air pump أو tire inflator "
+            "إن كانت موجودة، وأرفق saved_vehicles كقيد مجموعة فقط؛ لا تفرغ "
+            "الكلمات ولا تحوله إلى category=other أو accessories.",
+            "لا تضع category=accessories لمجرد أن المنتج ملحق أو يستخدم "
+            "مع جهاز أو مركبة. category خاص بالتصنيفات الداخلية القديمة "
+            "ولا يصبح قيدًا إلا إذا طلب المستخدم ذلك صراحة. "
+            "category_filter_requested=true فقط لقيد فئة صريح؛ وإلا "
+            "أعد false حتى في طلبات المنتجات الواقعة ضمن مجموعة عروض.",
+        ])
     elif request_kind == "user_category":
         categories = list(_GEMINI_OFFICIAL_CATEGORY_NAMES)
         context["allowed_official_categories"] = categories
@@ -714,6 +772,25 @@ def _normalize_official_categories(result):
     return categories
 
 
+def _normalize_allowlisted_values(value, allowed_values, limit):
+    """Return distinct provider values restricted to a fixed project vocabulary."""
+    allowed = {
+        str(item).casefold(): str(item)
+        for item in allowed_values
+        if item
+    }
+    raw_values = value if isinstance(value, (list, tuple, set)) else [value]
+    normalized = []
+    for raw in raw_values:
+        candidate = " ".join(str(raw or "").split()).strip()
+        accepted = allowed.get(candidate.casefold())
+        if accepted and accepted not in normalized:
+            normalized.append(accepted)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
 def _restrict_gemini_keywords_to_snapshot(result, snapshot):
     """Keep Gemini keywords and synonyms inside the active phrase vocabulary."""
     if not isinstance(result, dict):
@@ -723,7 +800,13 @@ def _restrict_gemini_keywords_to_snapshot(result, snapshot):
         getattr(result, "provider", None) == "DeepSeek"
         or getattr(result, "ai_provider", None) == "DeepSeek"
     )
+    closed_vocabulary_match = (
+        getattr(result, "provider", None) in _CLOSED_VOCABULARY_PROVIDERS
+        or getattr(result, "ai_provider", None)
+        in _CLOSED_VOCABULARY_PROVIDERS
+    )
     max_cached_matches = None if extended_deepseek_match else 6
+    max_phrase_chars = None if closed_vocabulary_match else 100
     allowed = {}
     for keyword in (snapshot or {}).get("keywords") or []:
         key = _keyword_vocabulary_key(keyword)
@@ -750,6 +833,7 @@ def _restrict_gemini_keywords_to_snapshot(result, snapshot):
         result.get("keyword_groups"),
         max_candidates=max_cached_matches,
         max_alternatives=max_cached_matches,
+        max_keyword_chars=max_phrase_chars,
     ):
         accepted_group = []
         for raw_keyword in group:
@@ -1079,14 +1163,18 @@ def _canonical_user_request(result, fallback_text):
     return canonical_request or fallback_text
 
 
-def _normalize_request_keywords(value):
+def _normalize_request_keywords(value, max_keyword_chars=100):
     if not isinstance(value, list):
         return []
     keywords = []
     for item in value[:8]:
         keyword = " ".join(str(item or "").split()).strip()
         if keyword and keyword not in keywords:
-            keywords.append(keyword[:100])
+            keywords.append(
+                keyword
+                if max_keyword_chars is None
+                else keyword[:max_keyword_chars]
+            )
     return keywords[:6]
 
 
@@ -1095,6 +1183,7 @@ def _normalize_keyword_groups(
     max_groups=6,
     max_candidates=12,
     max_alternatives=8,
+    max_keyword_chars=100,
 ):
     """Normalize provider synonym groups without flattening OR alternatives."""
     if not isinstance(value, list):
@@ -1135,7 +1224,11 @@ def _normalize_keyword_groups(
             if not keyword or marker in seen:
                 continue
             seen.add(marker)
-            normalized.append(keyword[:100])
+            normalized.append(
+                keyword
+                if max_keyword_chars is None
+                else keyword[:max_keyword_chars]
+            )
         if normalized:
             groups.append(
                 normalized
@@ -1145,12 +1238,17 @@ def _normalize_keyword_groups(
     return groups
 
 
-def _remove_shipping_terms_from_keyword_groups(groups, shipping_tokens):
+def _remove_shipping_terms_from_keyword_groups(
+    groups,
+    shipping_tokens,
+    max_keyword_chars=100,
+):
     cleaned = []
     for group in groups:
         normalized = _remove_shipping_terms_from_keywords(
             group,
             shipping_tokens,
+            max_keyword_chars=max_keyword_chars,
         )
         if normalized:
             cleaned.append(normalized)
@@ -1164,7 +1262,11 @@ def _shipping_keyword_token(token):
     return normalized
 
 
-def _remove_shipping_terms_from_keywords(keywords, shipping_tokens):
+def _remove_shipping_terms_from_keywords(
+    keywords,
+    shipping_tokens,
+    max_keyword_chars=100,
+):
     """Keep product terms while removing shipping wording from AI keywords."""
     shipping_words = {
         "الشحن",
@@ -1198,7 +1300,8 @@ def _remove_shipping_terms_from_keywords(keywords, shipping_tokens):
 
     cleaned = []
     for keyword in keywords:
-        parts = re.findall(r"[\w\u0600-\u06ff]+", str(keyword))
+        original = " ".join(str(keyword or "").split()).strip()
+        parts = re.findall(r"[\w\u0600-\u06ff]+", original)
         if not parts:
             continue
         remaining = [
@@ -1207,8 +1310,15 @@ def _remove_shipping_terms_from_keywords(keywords, shipping_tokens):
             if _shipping_keyword_token(part) not in shipping_words
         ]
         if remaining:
-            cleaned.append(" ".join(remaining))
-    return _normalize_request_keywords(cleaned)
+            cleaned.append(
+                original
+                if len(remaining) == len(parts)
+                else " ".join(remaining)
+            )
+    return _normalize_request_keywords(
+        cleaned,
+        max_keyword_chars=max_keyword_chars,
+    )
 
 
 def _canonical_spec_value(value):
@@ -1488,7 +1598,13 @@ def _normalize_user_request_result(
     if request_type not in _REQUEST_TYPES:
         request_type = "unsupported"
 
-    keywords = _normalize_request_keywords(result.get("keywords"))
+    max_phrase_chars = (
+        None if ai_provider in _CLOSED_VOCABULARY_PROVIDERS else 100
+    )
+    keywords = _normalize_request_keywords(
+        result.get("keywords"),
+        max_keyword_chars=max_phrase_chars,
+    )
     required_specs = _normalize_required_specs(result.get("required_specs"))
     shipping_country = _normalize_shipping_country(
         result.get("shipping_country")
@@ -1508,6 +1624,7 @@ def _normalize_user_request_result(
         keywords = _remove_shipping_terms_from_keywords(
             keywords,
             shipping_keyword_tokens,
+            max_keyword_chars=max_phrase_chars,
         )
     keyword_groups = []
     if (
@@ -1518,16 +1635,49 @@ def _normalize_user_request_result(
             result.get("keyword_groups"),
             max_candidates=None if ai_provider == "DeepSeek" else 12,
             max_alternatives=None if ai_provider == "DeepSeek" else 8,
+            max_keyword_chars=max_phrase_chars,
         )
         if shipping_keyword_tokens:
             keyword_groups = _remove_shipping_terms_from_keyword_groups(
                 keyword_groups,
                 shipping_keyword_tokens,
+                max_keyword_chars=max_phrase_chars,
             )
         if keyword_groups and not keywords:
             keywords = _normalize_request_keywords(
-                [group[0] for group in keyword_groups]
+                [group[0] for group in keyword_groups],
+                max_keyword_chars=max_phrase_chars,
             )
+    saved_subcategory_keys = {
+        key
+        for key, _label in SAVED_OFFER_CATEGORY_FILTERS
+        if key not in SAVED_OFFER_CATEGORY_COLUMN_FILTERS
+    }
+    raw_saved_subcategories = []
+    if result.get("saved_subcategory") is not None:
+        raw_saved_subcategories.append(result.get("saved_subcategory"))
+    raw_saved_subcategories.extend(
+        result.get("saved_subcategories")
+        if isinstance(result.get("saved_subcategories"), list)
+        else []
+    )
+    saved_subcategories = _normalize_allowlisted_values(
+        raw_saved_subcategories,
+        saved_subcategory_keys,
+        limit=len(saved_subcategory_keys),
+    )
+    saved_categories = _normalize_allowlisted_values(
+        [
+            result.get("saved_category"),
+            *(
+                result.get("saved_categories")
+                if isinstance(result.get("saved_categories"), list)
+                else []
+            ),
+        ],
+        SAVED_OFFER_CATEGORY_COLUMN_FILTERS,
+        limit=len(SAVED_OFFER_CATEGORY_COLUMN_FILTERS),
+    )
     official_categories = (
         _normalize_official_categories(result)
         if allow_gemini_official_categories
@@ -1572,6 +1722,15 @@ def _normalize_user_request_result(
             ) else "product_best"
             category = "phones"
 
+    if ai_provider == "DeepSeek" and (
+        saved_subcategories or saved_categories
+    ):
+        # The saved-offer taxonomy is authoritative for these buttons. Keep
+        # its bucket as the category constraint instead of intersecting it
+        # with an unrelated legacy internal or official category guess.
+        category = None
+        official_categories = []
+
     min_price = _coerce_price(result.get("min_price"))
     max_price = _coerce_price(result.get("max_price"))
     target_price = _coerce_price(result.get("target_price"))
@@ -1600,7 +1759,10 @@ def _normalize_user_request_result(
                 model_token,
             ) and model_token not in existing_keyword_tokens:
                 keywords.append(model_token)
-        keywords = _normalize_request_keywords(keywords)
+        keywords = _normalize_request_keywords(
+            keywords,
+            max_keyword_chars=max_phrase_chars,
+        )
 
     if min_price is not None and max_price is not None:
         price_mode = None
@@ -1665,7 +1827,12 @@ def _normalize_user_request_result(
             category = "other"
         # A category search without a category would otherwise become a
         # broad, misleading search across every stored offer.
-        if inferred_category is None and not official_categories:
+        if (
+            inferred_category is None
+            and not official_categories
+            and not saved_subcategories
+            and not saved_categories
+        ):
             request_type = "unsupported"
     elif request_type in {
         "product_best",
@@ -1710,6 +1877,14 @@ def _normalize_user_request_result(
         normalized["keyword_groups"] = keyword_groups
     if official_categories:
         normalized["official_categories"] = official_categories
+    if len(saved_subcategories) == 1:
+        normalized["saved_subcategory"] = saved_subcategories[0]
+    elif saved_subcategories:
+        normalized["saved_subcategories"] = saved_subcategories
+    if len(saved_categories) == 1:
+        normalized["saved_category"] = saved_categories[0]
+    elif saved_categories:
+        normalized["saved_categories"] = saved_categories
     explicit_offer_type = _extract_offer_type_from_text(text)
     offer_type = explicit_offer_type
     if offer_type is None and _normalize_offer_type(result.get("offer_type")) == "normal":
@@ -3013,10 +3188,13 @@ def _match_user_product_terms_in_gemini_cache(
 {text}
 """
         safe_primary = _restrict_gemini_keywords_to_snapshot(
-            {
-                "keywords": keywords,
-                "keyword_groups": normalized.get("keyword_groups") or [],
-            },
+            ChannelAnalysis(
+                {
+                    "keywords": keywords,
+                    "keyword_groups": normalized.get("keyword_groups") or [],
+                },
+                ai_provider=result_provider,
+            ),
             snapshot,
         )
         try:
@@ -3506,6 +3684,14 @@ accessories = Phones & Telecommunications > Mobile Phone Accessories،
 Consumer Electronics. لا تصنف المنتج كهاتف لمجرد وجود phone أو mobile
 في عنوان ملحق أو منتج متوافق مع الهاتف.
 
+لفئات أزرار «عروض AI المحفوظة» استخدم saved_subcategory أو
+saved_subcategories للمفاتيح الرئيسية المسموحة، أو saved_category /
+saved_categories للساعات الذكية وسماعات البلوتوث فقط. هذه مفاتيح مختلفة
+عن category وofficial_categories. في طلب المنتج أبقِ عبارات المنتج كما هي،
+وأرفق مجموعة العروض المحفوظة المطابقة عند وجود انتماء واضح؛ لا تضع
+category عامًا مثل accessories كتخمين عن استعمال المنتج. category_filter_requested
+يصف فقط فئة طلب المستخدم صراحة، وليس مجموعة العرض التي استنتجها للمطابقة.
+
 أعد النموذج التالي:
 {{
   "canonical_request": "",
@@ -3513,6 +3699,11 @@ Consumer Electronics. لا تصنف المنتج كهاتف لمجرد وجود 
   "keywords": [],
   "keyword_groups": [],
   "category": null,
+  "saved_subcategory": null,
+  "saved_subcategories": [],
+  "saved_category": null,
+  "saved_categories": [],
+  "official_categories": [],
   "min_price": null,
   "max_price": null,
   "price_mode": null,
@@ -3556,7 +3747,8 @@ Consumer Electronics. لا تصنف المنتج كهاتف لمجرد وجود 
 لا تضع مرادفات للفئة في keyword_groups إذا كانت category كافية. لا تضف
 مرادفات تخمينية لا تحمل نفس المعنى، ولا تستخدم كلمات الطلب العامة.
 لا تنشئ SQL ولا تضف مفاتيح خارج مخطط JSON؛ يمكن لسياق الخدمة إضافة
-category_filter_requested فقط.
+category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا بالقيم
+المسموحة التي يحددها سياق DeepSeek.
 
 أمثلة:
 - "عروض الهواتف الاقل من 100$" و"عروض هواتف بسعر اقل من 100$" لهما
@@ -3724,7 +3916,10 @@ category_filter_requested فقط.
                 return local
     if is_closed_vocabulary_result:
         normalized = _restrict_gemini_keywords_to_snapshot(
-            normalized,
+            ChannelAnalysis(
+                normalized,
+                ai_provider=result_provider,
+            ),
             gemini_snapshot,
         )
     local_product_type = _local_product_request_type(canonical_request)
@@ -3844,6 +4039,15 @@ category_filter_requested فقط.
         is_closed_vocabulary_result
         and category_filter_requested
         and not saved_special_categories
+        and not (
+            result_provider == "DeepSeek"
+            and (
+                normalized.get("saved_subcategory")
+                or normalized.get("saved_subcategories")
+                or normalized.get("saved_category")
+                or normalized.get("saved_categories")
+            )
+        )
     ):
         normalized = _match_user_categories_in_gemini_cache(
             canonical_request,
@@ -3852,7 +4056,25 @@ category_filter_requested فقط.
             category_filter_requested=True,
         )
     elif (
-        result_provider in _CLOSED_VOCABULARY_PROVIDERS
+        result_provider == "DeepSeek"
+        and not category_filter_requested
+        and (
+            normalized.get("request_type")
+            in {
+                "product_best",
+                "product_cheapest",
+                "product_price_range",
+            }
+            or local_product_signal
+        )
+    ):
+        # A guessed broad taxonomy is not a hard filter on a DeepSeek
+        # product search. Keep the independently validated saved-offer group.
+        normalized["category"] = None
+        normalized.pop("official_category", None)
+        normalized.pop("official_categories", None)
+    elif (
+        result_provider == "Gemini"
         and category_filter_requested_present
         and not category_filter_requested
         and normalized.get("request_type")
@@ -3862,7 +4084,7 @@ category_filter_requested فقط.
             "product_price_range",
         }
     ):
-        # An inferred family is not a user constraint for a product search.
+        # Preserve Gemini's existing explicit-false behavior.
         normalized["category"] = None
     normalized = _apply_saved_special_category_intent(
         normalized,
