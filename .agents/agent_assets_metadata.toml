@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "cOokxnlfexF1InWCzfco0"
+uri = "file://docs/ai-search-guide-ar.html"
+type = "html"
+title = "دليل معالجة طلبات المستخدمين وعروض AI"
+description = "دليل عربي مفصل في 17 قسمًا يشرح تحليل النية وDeepSeek والقاموس والفلاتر وسحب العروض وترتيبها وعرضها، مع أمثلة وحدود التنفيذ. قابل للفتح في المتصفح والطباعة إلى PDF."
+logical_id = "90893da8-0b72-4b29-be5f-437f6ef3cf60"
+content_hash = "sha256:7bd82100c7a426634f9ed6996a6cf9d0feb5589e76d3d43ed2c03f696ab2ba75"
+size = 63230
+mtime_ms = 1794484535131
+storage_uri = "gcs://replit-rams-assets-spock/rams/assets/repl:4da079b5-21f5-45f9-a751-8f97791b591c/90893da8-0b72-4b29-be5f-437f6ef3cf60/769eb3c9-dde1-4b2b-944a-529376a4607a"
+storage_version_token = "1794484555960551"
+content_type = "text/html"
