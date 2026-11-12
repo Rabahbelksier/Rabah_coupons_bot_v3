@@ -89,7 +89,12 @@ GEMINI_CACHE_PHRASE_MATCHING_RULES = (
     "4. اختر بتحفّظ: أدرج العبارة عندما تدل دلاليًا على المنتج نفسه أو على "
     "مرادف أو ترجمة أو تهجئة معروفة له؛ لا تخمّن الصلة عند الشك، ولا تحوّل "
     "طلب فئة فقط إلى طلب منتج محدد. تصنيف request_type أو category الأولي "
-    "قرينة وليس مانعًا إذا سمّت رسالة المستخدم منتجًا محددًا.\n"
+    "قرينة وليس مانعًا إذا سمّت رسالة المستخدم منتجًا محددًا. إذا طلب "
+    "المستخدم نوعًا عامًا من المنتجات، فأدرج أيضًا العبارات التي تسمي "
+    "نوعًا فرعيًا حقيقيًا منه؛ فطلب «مصابيح» يشمل مصباحًا أماميًا أو ليليًا "
+    "أو لمبة، لكن لا يشمل حامل المصباح أو قاعدته أو المقبس لأنه ملحق، ولا "
+    "لوحة مفاتيح تذكر RGB light أو شاشة تعرض LED كميزة عارضة. لا تحصر النوع "
+    "العام في مرادف حرفي واحد.\n"
     "5. التزم بالكاش: أخرج العبارة كاملة كما وردت في القائمة، دون ترجمتها "
     "أو إعادة صياغتها أو تركيبها من أجزاء عبارات مختلفة. الشرطة السفلية "
     "في المدخل القديم تعادل المسافة للمطابقة فقط؛ أبقِ النص الأصلي والواصلة "
@@ -658,12 +663,21 @@ class _CallableProvider:
     def model(self):
         return self._model()
 
-    def generate_json(self, prompt, request_kind=None):
+    def generate_json(
+        self,
+        prompt,
+        request_kind=None,
+        request_context_override=None,
+    ):
         try:
             context = (
-                self._request_context_loader(request_kind)
-                if self._request_context_loader
-                else None
+                request_context_override
+                if request_context_override is not None
+                else (
+                    self._request_context_loader(request_kind)
+                    if self._request_context_loader
+                    else None
+                )
             )
             if context:
                 request_prompt = prompt
@@ -720,17 +734,21 @@ class _CallableProvider:
                     request_prompt = (
                         f"{request_prompt}\n\n"
                         "أضف إلى نتيجة JSON الحقل category_filter_requested "
-                        "كقيمة boolean: true فقط إذا طلب المستخدم صراحةً فئة "
-                        "أو قيد نوع/فئة على العروض، وfalse خلاف ذلك. عند true "
-                        "لا تحوّل اسم الفئة إلى كلمات منتج؛ ستتم مطابقتها "
-                        "من قاموس رسمي مستقل. إذا كان الطلب بحثًا صالحًا عن "
-                        "فئة غير ممثلة بمفتاح داخلي، استخدم نوع category "
+                        "كقيمة boolean: true فقط إذا طلب المستخدم صراحةً "
+                        "المجموعة الرئيسية كاملة من فئات العروض المحفوظة، "
+                        "وfalse إذا طلب منتجًا أو نوع منتج. كلمة مثل مصباح "
+                        "أو جهاز فحص السيارات ليست فئة رئيسية؛ والمنزل/البيت "
+                        "طلب فئة عندما يقصد المستخدم عروض المنزل عمومًا. عند "
+                        "true لا تحوّل اسم الفئة إلى كلمات منتج؛ ستتم مطابقتها "
+                        "بمفتاح saved_* لا بقاموس الفئات الرسمية. إذا كان "
+                        "الطلب بحثًا صالحًا عن فئة غير ممثلة بمفتاح داخلي، "
+                        "استخدم نوع category "
                         "المناسب وcategory=other عند الحاجة، ولا تستخدم other "
                         "إلا مع هذا القيد الصريح. أعد saved_* فقط بالمفاتيح "
-                        "الموجودة في سياق DeepSeek؛ الفئة الرئيسية مع المنتج "
-                        "قيد AND إضافي ولا تحذف كلمات المنتج. category "
-                        "استنتاج الاستخدام لا يصبح قيدًا على product_* إلا "
-                        "عند category_filter_requested=true. أبقِ الطلبات "
+                        "الموجودة في سياق DeepSeek. لا ترفق فئة محفوظة بطلب "
+                        "منتج إلا إذا طلب المستخدم المنتج والفئة معًا صراحةً. "
+                        "category استنتاج الاستخدام لا يصبح قيدًا على product_* "
+                        "أبدًا. أبقِ الطلبات "
                         "غير البحثية unsupported. لا تضف مفاتيح خارج مخطط "
                         "النتيجة."
                     )
@@ -776,7 +794,12 @@ class _OpenAICompatibleProvider:
     def can_attempt(self):
         return self.configured
 
-    def generate_json(self, prompt, request_kind=None):
+    def generate_json(
+        self,
+        prompt,
+        request_kind=None,
+        request_context_override=None,
+    ):
         if not self.configured:
             raise AIProviderConfigurationError(
                 f"{self.name} is not configured"
@@ -784,9 +807,13 @@ class _OpenAICompatibleProvider:
 
         try:
             context = (
-                self._request_context_loader(request_kind)
-                if self._request_context_loader
-                else None
+                request_context_override
+                if request_context_override is not None
+                else (
+                    self._request_context_loader(request_kind)
+                    if self._request_context_loader
+                    else None
+                )
             )
             messages = [{"role": "user", "content": prompt}]
             system_prompt = (
@@ -1038,7 +1065,13 @@ class AIService:
         }
 
     @observed("ai.generate")
-    def generate_json(self, prompt, request_kind="user", provider_name=None):
+    def generate_json(
+        self,
+        prompt,
+        request_kind="user",
+        provider_name=None,
+        request_context_override=None,
+    ):
         if provider_name and not any(
             provider.name == provider_name for provider in self._providers
         ):
@@ -1050,6 +1083,7 @@ class AIService:
                 prompt,
                 request_kind=request_kind,
                 provider_name=provider_name,
+                request_context_override=request_context_override,
             )
             return result
         finally:
@@ -1060,7 +1094,13 @@ class AIService:
                 (time.perf_counter() - started_at) * 1000,
             )
 
-    def _generate_json(self, prompt, request_kind="user", provider_name=None):
+    def _generate_json(
+        self,
+        prompt,
+        request_kind="user",
+        provider_name=None,
+        request_context_override=None,
+    ):
         with self._lock:
             self._load_persisted_state_locked()
             self._refresh_expired_locked()
@@ -1145,6 +1185,7 @@ class AIService:
                     prompt,
                     allow_groq_tpd_overage,
                     request_kind,
+                    request_context_override=request_context_override,
                 )
             except (AIProviderQuotaError, AIProviderConfigurationError) as exc:
                 self._quarantine_provider(
@@ -1237,6 +1278,7 @@ class AIService:
         prompt,
         allow_groq_tpd_overage,
         request_kind="user",
+        request_context_override=None,
     ):
         attempts = (
             _GROQ_TPD_OVERAGE_MAX_ATTEMPTS
@@ -1278,6 +1320,12 @@ class AIService:
                     provider,
                     (_CallableProvider, _OpenAICompatibleProvider),
                 ):
+                    if request_context_override is not None:
+                        return provider.generate_json(
+                            prompt,
+                            request_kind=request_kind,
+                            request_context_override=request_context_override,
+                        )
                     return provider.generate_json(
                         prompt,
                         request_kind=request_kind,

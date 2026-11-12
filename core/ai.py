@@ -118,12 +118,75 @@ _CATEGORY_KEYWORDS = {
         "gaming", "game", "console", "playstation", "xbox", "نينتندو",
         "بلايستيشن", "اكس", "بوكس", "ألعاب",
     },
-    "home": {"home", "kitchen", "منزل", "مطبخ", "منزلية"},
+    "home": {
+        "home", "house", "kitchen", "منزل", "المنزل", "منزلية",
+        "البيت", "بيت", "بالمنزل", "للمنزل", "بالبيت", "للبيت",
+    },
     "accessories": {
         "accessory", "accessories", "adapter", "charger", "cable", "case",
         "اكسسوار", "اكسسوارات", "إكسسوار", "إكسسوارات", "ملحق", "ملحقات",
         "شاحن", "شواحن", "كابل", "كوابل", "جراب", "جرابات",
     },
+}
+_DEEPSEEK_PRODUCT_TERM_ALIASES = {
+    "مصباح": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "المصباح": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "مصابيح": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "المصابيح": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "لمبة": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "اللمبة": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "لمبات": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "اللمبات": (
+        "lamp", "light bulb", "bulb", "lighting", "lampe", "phare",
+        "headlight", "night light",
+    ),
+    "كشاف": (
+        "spotlight", "flashlight", "headlight", "fog light", "lamp",
+    ),
+    "كشافات": (
+        "spotlight", "flashlight", "headlight", "fog light", "lamp",
+    ),
+    "جهاز فحص السيارات": (
+        "car diagnostic scanner", "obd2 scanner",
+        "vehicle diagnostic tool", "elm327",
+    ),
+    "جهاز فحص": (
+        "car diagnostic scanner", "obd2 scanner",
+        "vehicle diagnostic tool", "elm327",
+    ),
+}
+_DEEPSEEK_CACHE_MATCH_BATCH_SIZE = 120
+_DEEPSEEK_CACHE_MATCH_CANDIDATE_LIMIT = 360
+_DEEPSEEK_INTERNAL_CATEGORY_TO_SAVED = {
+    "phones": "saved_phones",
+    "tablets": "saved_tablets",
+    "laptops": "saved_computer",
+    "home": "saved_home",
+    "accessories": "saved_accessories",
+    "gaming": "saved_electronics",
+    "cameras": "saved_electronics",
+    "headphones": "saved_electronics",
 }
 _CATEGORY_BRANDS = {
     "phones": {
@@ -198,6 +261,10 @@ _GENERIC_REQUEST_WORDS = {
     "deliver",
     "منتج",
     "منتجات",
+    "خاص",
+    "خاصة",
+    "ل",
+    "لل",
     "product",
     "products",
     "phone",
@@ -615,9 +682,11 @@ def _deepseek_request_context(request_kind):
                 if keywords
                 else "(القاموس فارغ)"
             ),
-            "أضف category_filter_requested كقيمة boolean: true فقط إذا طلب "
-            "المستخدم صراحةً فئة أو نوعًا من العروض؛ خلاف ذلك false. لا "
-            "تستخدم اسم الفئة ككلمة منتج.",
+            "أضف category_filter_requested كقيمة boolean: true فقط إذا كان "
+            "المقصود فئة رئيسية كاملة من أزرار عروض AI المحفوظة، وfalse إذا "
+            "كان المقصود نوع منتج بعينه أو عامًا. «أريد عروض المنزل/البيت» "
+            "طلب فئة؛ «أريد عروض مصباح/مصابيح» طلب منتج. لا تجعل فئة داخلية "
+            "مثل home دليلًا على أن منتجًا يخص المنزل.",
         ])
         saved_offer_categories = []
         for key, label in SAVED_OFFER_CATEGORY_FILTERS:
@@ -652,25 +721,32 @@ def _deepseek_request_context(request_kind):
             "AliExpress الرسمية.\n"
             "قاموس الفئات الرئيسية السبعة عشر بصيغة JSON:\n"
             + json.dumps(saved_offer_categories, ensure_ascii=False),
-            "ميّز فئة العرض التي اختارها المستخدم عن اسم نوع المنتج: إذا "
-            "طلب فئة رئيسية من القاموس، أرفق مفتاحها. وإذا طلب منتجًا "
-            "محددًا أو نوع منتج عام داخل فئة رئيسية واضحة، احتفظ بعبارات "
-            "المنتج في keywords وkeyword_groups، وأرفق مفتاح مجموعة "
-            "العروض المحفوظة المناسبة فقط إذا كانت المطابقة واثقة؛ المنتج "
-            "ومجموعة عروضه شرطان متزامنان. لا تستبدل كلمات المنتج بالفئة. "
-            "إن لم توجد مجموعة واضحة فاتركها فارغة، ولا تخمّن فئة واسعة "
-            "غير مناسبة.",
+            "ميّز طلب مجموعة رئيسية كاملة من طلب اسم منتج أو نوع منتج. "
+            "في طلب فئة فقط، أعد مفتاح saved_* الصحيح واجعل keywords و"
+            "keyword_groups فارغتين. لا تشترط ذكر اسم الزر حرفيًا: افهم "
+            "المرادفات والمعنى، مثل المنزل/البيت إلى saved_home. أما "
+            "المصباح أو جهاز فحص السيارات فهما نوعا منتج، لا فئتا منزل أو "
+            "مركبات؛ أعد عبارات القاموس الكاملة لهما، واترك كل saved_* "
+            "فارغًا ما لم يطلب المستخدم الفئة الرئيسية صراحةً أيضًا.",
             "الجهاز أو الأداة ذات الوظيفة المسماة، حتى دون علامة أو موديل، "
             "طلب منتج product_* وليس طلب فئة category_*: مثال «عروض جهاز "
             "نفخ عجلات السيارات» هو جهاز نفخ محدد، وليس طلب كل عروض فئة "
-            "المركبات. اختر له عبارات القاموس مثل air pump أو tire inflator "
-            "إن كانت موجودة، وأرفق saved_vehicles كقيد مجموعة فقط؛ لا تفرغ "
-            "الكلمات ولا تحوله إلى category=other أو accessories.",
+            "المركبات. و«عروض مصابيح» طلب نوع منتج، بينما «عروض خاصة "
+            "بالمنزل» طلب فئة. لا تحوّل المصباح إلى home ولا جهاز الفحص إلى "
+            "فئة المركبات.",
+            "في طلب المنتج، أعد cache_search_terms كمرادفات قصيرة للمفهوم "
+            "بلغات القاموس للمساعدة في العثور على مرشحي العبارات؛ هذه "
+            "الكلمات ليست كلمات نية ولا تُنسخ إلى keywords. ضع في keywords "
+            "وkeyword_groups فقط العبارات الكاملة المطابقة للقاموس. عند "
+            "مطابقة «جهاز فحص السيارات» ابحث دلاليًا عن عبارات جهاز الفحص "
+            "والقارئ التشخيصي، لا عن كلمة جهاز وحدها. وعند مطابقة مصباح "
+            "اقبل أوصاف المصابيح من أنواع الإضاءة المختلفة، لا كل عنوان "
+            "يذكر إضاءة RGB عرضًا.",
             "لا تضع category=accessories لمجرد أن المنتج ملحق أو يستخدم "
             "مع جهاز أو مركبة. category خاص بالتصنيفات الداخلية القديمة "
             "ولا يصبح قيدًا إلا إذا طلب المستخدم ذلك صراحة. "
-            "category_filter_requested=true فقط لقيد فئة صريح؛ وإلا "
-            "أعد false حتى في طلبات المنتجات الواقعة ضمن مجموعة عروض.",
+            "category_filter_requested=true فقط عند طلب فئة رئيسية كاملة؛ "
+            "لا تضع saved_* تلقائيًا في طلب المنتج.",
         ])
     elif request_kind == "user_category":
         categories = list(_GEMINI_OFFICIAL_CATEGORY_NAMES)
@@ -686,6 +762,26 @@ def _deepseek_request_context(request_kind):
 
     context["system_prompt"] = "\n\n".join(system_parts)
     return context
+
+
+def _deepseek_phrase_match_context(candidates):
+    """Limit semantic phrase matching to one candidate slice per request."""
+    allowed_keywords = list(dict.fromkeys(candidates))
+    return {
+        "allowed_keywords": allowed_keywords,
+        "system_prompt": "\n\n".join([
+            _DEEPSEEK_SYSTEM_PREFIX,
+            GEMINI_CACHE_PHRASE_MATCHING_RULES,
+            "هذه مهمة مطابقة عبارات لمنتج المستخدم. افحص كل عبارة في قائمة "
+            "المرشحين المرفقة؛ أعد كل عبارة كاملة تطابق نوع المنتج نفسه أو "
+            "مرادفًا/ترجمة له. لا تشترط لغة المستخدم، ولا تتوقف عند أول "
+            "تطابق. لا تخلط نوع المنتج بفئته الرئيسية، ولا تدرج المرادفات "
+            "المقترحة في البحث إلا إذا طابقت عبارة كاملة هنا. القائمة "
+            "مقتطف مرشحين من قاموس العبارات المغلق، وليست كلمات تعليمات.",
+            "قائمة مرشحي القاموس:\n"
+            + json.dumps(allowed_keywords, ensure_ascii=False),
+        ]),
+    }
 
 
 def sync_gemini_keyword_cache_on_startup():
@@ -1061,14 +1157,21 @@ _AI_SERVICE = AIService(
 )
 
 
-def _call_ai(prompt, request_kind="user", provider_name=None):
+def _call_ai(
+    prompt,
+    request_kind="user",
+    provider_name=None,
+    request_context_override=None,
+):
     """Use the unified AI service while preserving legacy error behavior."""
     try:
-        return _AI_SERVICE.generate_json(
-            prompt,
-            request_kind=request_kind,
-            provider_name=provider_name,
-        )
+        options = {
+            "request_kind": request_kind,
+            "provider_name": provider_name,
+        }
+        if request_context_override is not None:
+            options["request_context_override"] = request_context_override
+        return _AI_SERVICE.generate_json(prompt, **options)
     except AIServiceUnavailableError as exc:
         if exc.quota_exhausted or exc.retryable_recovery:
             raise GeminiRateLimitError(str(exc)) from exc
@@ -1698,6 +1801,20 @@ def _normalize_user_request_result(
             _infer_request_category(keywords)
             or _infer_request_category_from_text(text)
         )
+    if (
+        ai_provider == "DeepSeek"
+        and result.get("category_filter_requested") is True
+        and request_type
+        in {"category_cheapest", "category_price_range", "trending"}
+        and not saved_subcategories
+        and not saved_categories
+    ):
+        saved_key = _DEEPSEEK_INTERNAL_CATEGORY_TO_SAVED.get(category)
+        if saved_key:
+            if saved_key in SAVED_OFFER_CATEGORY_COLUMN_FILTERS:
+                saved_categories = [saved_key]
+            else:
+                saved_subcategories = [saved_key]
     inferred_brand_category = _infer_request_category(keywords)
     brand_tokens = {
         brand.casefold()
@@ -1820,6 +1937,8 @@ def _normalize_user_request_result(
             and not official_categories
             and allow_gemini_official_categories
             and result.get("category_filter_requested") is True
+            and not saved_subcategories
+            and not saved_categories
         ):
             # The official category stage will replace this broad internal
             # family with an exact second-level category, or fail closed.
@@ -2208,6 +2327,8 @@ def _local_product_request_type(text):
         "product_cheapest",
         "product_price_range",
     }:
+        if _local_request_is_category_only(local_intent, text):
+            return None
         if not _has_specific_product_keyword(
             local_intent.get("keywords") or []
         ):
@@ -2236,6 +2357,57 @@ def _local_product_request_type(text):
             return None
         return request_type
     return None
+
+
+def _local_request_is_category_only(local_intent, text):
+    """Keep broad internal category wording from becoming a product signal."""
+    category = (
+        local_intent.get("category")
+        or _infer_request_category_from_text(text)
+    )
+    aliases = _CATEGORY_KEYWORDS.get(category)
+    if not category or not aliases:
+        return False
+
+    category_tokens = set()
+    for alias in aliases:
+        category_tokens.update(_keyword_vocabulary_key(alias).split())
+    normalized_category_tokens = set(category_tokens)
+    for token in category_tokens:
+        current = token
+        for prefix in ("بال", "لل", "ال"):
+            if current.startswith(prefix) and len(current) > len(prefix) + 1:
+                current = current[len(prefix):]
+                normalized_category_tokens.add(current)
+
+    generic_tokens = {
+        token
+        for word in _GENERIC_REQUEST_WORDS
+        for token in _keyword_vocabulary_key(word).split()
+    }
+    generic_tokens.update({
+        "على", "عن", "في", "من", "اريد", "ابحث", "اعرض", "اعطني",
+        "ل", "لل", "بال", "خاص", "خاصة", "عروض", "عرض", "منتجات",
+        "المنتجات",
+    })
+    request_keywords = local_intent.get("keywords") or []
+    for keyword in request_keywords:
+        tokens = _keyword_vocabulary_key(keyword).split()
+        if not tokens:
+            continue
+        remaining = []
+        for token in tokens:
+            current = token
+            for prefix in ("بال", "لل", "ال"):
+                if current.startswith(prefix) and len(current) > len(prefix) + 1:
+                    current = current[len(prefix):]
+                    break
+            if current in generic_tokens or current in normalized_category_tokens:
+                continue
+            remaining.append(current)
+        if remaining:
+            return False
+    return True
 
 
 def _is_broad_shipping_intent(intent):
@@ -3113,11 +3285,98 @@ def analyze_channel_post(text, request_kind="channel"):
     )
 
 
+def _deepseek_product_search_terms(result, text):
+    """Collect model/local synonyms used only to shortlist cached phrases."""
+    terms = []
+    if isinstance(result, dict):
+        terms.extend(
+            result.get("cache_search_terms")
+            if isinstance(result.get("cache_search_terms"), list)
+            else []
+        )
+        terms.extend(
+            result.get("keywords")
+            if isinstance(result.get("keywords"), list)
+            else []
+        )
+        groups = result.get("keyword_groups")
+        if isinstance(groups, list):
+            for group in groups:
+                if isinstance(group, (list, tuple)):
+                    terms.extend(group)
+
+    local = _local_parse_user_request(text)
+    terms.extend(local.get("keywords") or [])
+    normalized_text = f" {_keyword_vocabulary_key(text)} "
+    for surface, aliases in _DEEPSEEK_PRODUCT_TERM_ALIASES.items():
+        surface_key = _keyword_vocabulary_key(surface)
+        if surface_key and f" {surface_key} " in normalized_text:
+            terms.extend(aliases)
+
+    unique = []
+    seen = set()
+    for term in terms:
+        value = " ".join(str(term or "").split()).strip()
+        marker = _keyword_vocabulary_key(value)
+        if value and marker and marker not in seen:
+            unique.append(value)
+            seen.add(marker)
+        if len(unique) >= 80:
+            break
+    return unique
+
+
+def _deepseek_cache_phrase_candidates(cached_keywords, search_terms):
+    """Shortlist exact cache entries by overlap with multilingual concepts."""
+    ignored = {
+        _keyword_vocabulary_key(word)
+        for word in _GENERIC_REQUEST_WORDS
+    } | {
+        "car",
+        "cars",
+        "auto",
+        "automotive",
+        "vehicle",
+        "vehicles",
+        "led",
+        "display",
+        "screen",
+        "home",
+        "house",
+        "منزل",
+        "المنزل",
+        "البيت",
+    }
+    search_tokens = {
+        token
+        for term in search_terms
+        for token in _keyword_vocabulary_key(term).split()
+        if len(token) > 1 and token not in ignored
+    }
+    if not search_tokens:
+        return []
+
+    ranked = []
+    for index, phrase in enumerate(cached_keywords):
+        phrase_tokens = set(_keyword_vocabulary_key(phrase).split())
+        overlap = phrase_tokens.intersection(search_tokens)
+        if overlap:
+            ranked.append((len(overlap), index, phrase))
+    ranked.sort(key=lambda entry: (-entry[0], entry[1]))
+    return [
+        phrase
+        for _score, _index, phrase in ranked[
+            :_DEEPSEEK_CACHE_MATCH_CANDIDATE_LIMIT
+        ]
+    ]
+
+
 def _match_user_product_terms_in_gemini_cache(
     text,
     normalized,
     result_provider,
     snapshot=None,
+    semantic_terms=None,
 ):
     """Resolve product terms against the active closed phrase vocabulary."""
     if (
@@ -3153,6 +3412,142 @@ def _match_user_product_terms_in_gemini_cache(
     safe_primary = None
     if not cached_keywords:
         selected = {"keywords": [], "keyword_groups": []}
+    elif result_provider == "DeepSeek":
+        safe_primary = _restrict_gemini_keywords_to_snapshot(
+            ChannelAnalysis(
+                {
+                    "keywords": keywords,
+                    "keyword_groups": normalized.get("keyword_groups") or [],
+                },
+                ai_provider=result_provider,
+            ),
+            snapshot,
+        )
+        search_terms = list(semantic_terms or [])
+        if not search_terms:
+            search_terms = _deepseek_product_search_terms(normalized, text)
+        candidates = _deepseek_cache_phrase_candidates(
+            cached_keywords,
+            search_terms,
+        )
+        if not candidates and cached_keywords:
+            # Keep the semantic scan available for small snapshots and
+            # legacy primary responses without cache_search_terms.
+            candidates = cached_keywords[
+                :_DEEPSEEK_CACHE_MATCH_BATCH_SIZE
+            ]
+        collected_groups = []
+        collected_keywords = []
+        if candidates:
+            for offset in range(
+                0,
+                len(candidates),
+                _DEEPSEEK_CACHE_MATCH_BATCH_SIZE,
+            ):
+                batch = candidates[
+                    offset:offset + _DEEPSEEK_CACHE_MATCH_BATCH_SIZE
+                ]
+                prompt = f"""
+طابق طلب المنتج في رسالة المستخدم مع مرشحي القاموس الموجودين في رسالة
+النظام. افحص المرشحين كاملين واحدًا بعد الآخر، وأعد كل عبارة كاملة تصف
+المنتج نفسه أو مرادفًا/ترجمة حقيقية له أو نوعًا فرعيًا حقيقيًا للنوع
+المطلوب، لا أول عبارة فقط. مثلًا «مصابيح» تشمل المصابيح الأمامية والليلية
+واللمبات، لكن لا تشمل حامل المصباح أو قاعدته أو المقبس لأنها ملحقات، ولا
+لوحة مفاتيح أو شاشة تذكر LED/الإضاءة كميزة عرضية.
+هذا الطلب عن منتج أو نوع منتج، وليس طلب فئة رئيسية. لا تعتبر الفئة أو
+التصنيف الأولي قيدًا على المطابقة. لا تدرج منتجًا مجاورًا أو ملحقًا أو
+حاملًا/قاعدة/مقبسًا للمصباح، ولا شاشة هاتف/تلفاز أو شاشة LED لمجرد وجود
+LED في الاسم؛ المصباح المنير هو
+المطلوب وليس كل منتج يستخدم تقنية LED.
+أعد JSON فقط بالشكل:
+{{"keywords": [], "keyword_groups": []}}
+ضع كل عبارات النوع العام الذي طلبه المستخدم، بما فيها أوصاف الأنواع
+الفرعية المطابقة، في مجموعة OR واحدة؛ لا تقسّمها إلى مجموعات AND لمجرد
+اختلاف نوع المصباح أو استعماله. افصل فقط المنتجات المستقلة التي طلبها
+المستخدم معًا إلى مجموعات مختلفة. أعد نص العبارة كما ورد كاملًا، ولا تكتب كلمات البحث المرادفة
+بدلًا منها. لا تعدل السعر أو الشحن أو المواصفات أو نوع الطلب.
+
+نية المنتج الأولية:
+{json.dumps({
+    "request_type": normalized.get("request_type"),
+    "keywords": keywords[:6],
+    "keyword_groups": normalized.get("keyword_groups") or [],
+    "search_terms": search_terms,
+}, ensure_ascii=False)}
+
+رسالة المستخدم:
+{text}
+"""
+                try:
+                    result = _call_ai(
+                        prompt,
+                        request_kind="user",
+                        provider_name="DeepSeek",
+                        request_context_override=(
+                            _deepseek_phrase_match_context(batch)
+                        ),
+                    )
+                except GeminiError:
+                    logger.warning(
+                        "DeepSeek candidate phrase matching failed for batch "
+                        "%d; retaining successful batches",
+                        offset // _DEEPSEEK_CACHE_MATCH_BATCH_SIZE + 1,
+                        exc_info=True,
+                    )
+                    continue
+
+                active_keywords = getattr(
+                    result,
+                    "keyword_cache_keywords",
+                    None,
+                )
+                if (
+                    not getattr(result, "keyword_cache_active", False)
+                    or active_keywords is None
+                ):
+                    continue
+                accepted = _restrict_gemini_keywords_to_snapshot(
+                    result,
+                    {"keywords": active_keywords},
+                )
+                groups = accepted.get("keyword_groups") or []
+                if not groups and accepted.get("keywords"):
+                    groups = [accepted["keywords"]]
+                while len(collected_groups) < len(groups):
+                    collected_groups.append([])
+                for group_index, group in enumerate(groups):
+                    for phrase in group:
+                        if phrase not in collected_groups[group_index]:
+                            collected_groups[group_index].append(phrase)
+                        if phrase not in collected_keywords:
+                            collected_keywords.append(phrase)
+
+        primary_groups = safe_primary.get("keyword_groups") or []
+        if not primary_groups and safe_primary.get("keywords"):
+            primary_groups = [safe_primary["keywords"]]
+        while len(collected_groups) < len(primary_groups):
+            collected_groups.append([])
+        for group_index, group in enumerate(primary_groups):
+            for phrase in group:
+                if phrase not in collected_groups[group_index]:
+                    collected_groups[group_index].append(phrase)
+                if phrase not in collected_keywords:
+                    collected_keywords.append(phrase)
+
+        if len(primary_groups) <= 1:
+            broad_product_group = []
+            for group in collected_groups:
+                for phrase in group:
+                    if phrase not in broad_product_group:
+                        broad_product_group.append(phrase)
+            if broad_product_group:
+                collected_groups = [broad_product_group]
+
+        collected_groups = [group for group in collected_groups if group]
+        selected = {
+            "keywords": collected_keywords[:6],
+            "keyword_groups": collected_groups,
+        }
     else:
         primary_terms = {
             "request_type": normalized.get("request_type"),
@@ -3229,36 +3624,6 @@ def _match_user_product_terms_in_gemini_cache(
                 selected = _restrict_gemini_keywords_to_snapshot(
                     result,
                     {"keywords": active_keywords},
-                )
-
-        if result_provider == "DeepSeek" and safe_primary is not None:
-            primary_terms = list(safe_primary.get("keywords") or [])
-            for group in safe_primary.get("keyword_groups") or []:
-                primary_terms.extend(group)
-            primary_terms = list(dict.fromkeys(primary_terms))
-            selected_groups = [
-                list(group)
-                for group in selected.get("keyword_groups") or []
-            ]
-            selected_keywords = list(selected.get("keywords") or [])
-            if primary_terms:
-                if not selected_groups:
-                    selected_groups = [selected_keywords]
-                first_group = list(dict.fromkeys(
-                    selected_groups[0]
-                    + selected_keywords
-                    + primary_terms
-                ))
-                selected_groups[0] = first_group
-                selected = _restrict_gemini_keywords_to_snapshot(
-                    ChannelAnalysis(
-                        {
-                            "keywords": first_group[:6],
-                            "keyword_groups": selected_groups,
-                        },
-                        ai_provider=result_provider,
-                    ),
-                    snapshot,
                 )
 
     matched_keywords = selected.get("keywords") or []
@@ -3630,8 +3995,8 @@ def parse_user_request(text):
 
 الأنواع المسموحة في request_type:
 - product_best: أفضل عرض لمنتج محدد
-- category_cheapest: أرخص عروض فئة أو نوع
-- category_price_range: عروض فئة ضمن نطاق سعر
+- category_cheapest: أرخص عروض فئة رئيسية كاملة فقط
+- category_price_range: عروض فئة رئيسية كاملة ضمن نطاق سعر
 - product_cheapest: منتج محدد بأرخص سعر
 - product_price_range: منتج محدد ضمن نطاق سعر
 - trending: عروض رائجة أو متكررة اليوم
@@ -3651,9 +4016,16 @@ def parse_user_request(text):
 - product_best لطلب أفضل عرض عام لمنتج محدد.
 - product_cheapest عندما يطلب الأرخص أو أقل سعر لمنتج محدد.
 - product_price_range عندما يحدد سعرًا أدنى أو أعلى لمنتج محدد.
-- category_cheapest عندما يطلب أرخص منتج/عرض داخل فئة فقط، وليس أفضل منتج
-  من حيث الجودة أو المواصفات.
-- category_price_range عندما يطلب منتجات فئة ضمن حد أو نطاق سعري.
+- category_cheapest عندما يطلب أرخص العروض داخل فئة رئيسية كاملة، وليس
+  منتجًا أو نوع منتج مثل مصباح أو جهاز فحص سيارات.
+- category_price_range عندما يطلب عروض فئة رئيسية كاملة ضمن حد أو نطاق سعري.
+- المنتج المسمى بوظيفته أو نوعه، ولو بلا علامة أو موديل، يظل product_*:
+  «عروض مصباح» و«عروض جهاز فحص السيارات» بحثان عن نوعي منتج. لا تحولهما
+  إلى فئة المنزل أو المركبات، ولا تضع مفتاح saved_* لهما وحدهما.
+- الفئة تعني طلب المجموعة الرئيسية كلها: «عروض خاصة بالمنزل» و«أغراض
+  للبيت» طلب فئة saved_home، حتى لو لم يذكر المستخدم تسمية الزر حرفيًا.
+  استعمل saved_* الصحيح للمعنى الكامل، ولا تستخدم category الداخلي بدلًا
+  منه. إذا طلب المستخدم منتجًا وفئة صراحةً، احتفظ بالمنتج والفئة معًا.
 - trending فقط عند طلب العروض الرائجة أو الأكثر تكرارًا. يمكن أن يصاحبه
   category أو اسم منتج أو مواصفات أو نطاق سعر، ويجب الاحتفاظ بهذه القيود.
   مثال: "العروض الرائجة اليوم على الهواتف فقط" يعني trending مع
@@ -3688,14 +4060,15 @@ Consumer Electronics. لا تصنف المنتج كهاتف لمجرد وجود 
 saved_subcategories للمفاتيح الرئيسية المسموحة، أو saved_category /
 saved_categories للساعات الذكية وسماعات البلوتوث فقط. هذه مفاتيح مختلفة
 عن category وofficial_categories. في طلب المنتج أبقِ عبارات المنتج كما هي،
-وأرفق مجموعة العروض المحفوظة المطابقة عند وجود انتماء واضح؛ لا تضع
-category عامًا مثل accessories كتخمين عن استعمال المنتج. category_filter_requested
-يصف فقط فئة طلب المستخدم صراحة، وليس مجموعة العرض التي استنتجها للمطابقة.
+ولا ترفق فئة محفوظة إلا إذا طلب المستخدم الفئة الرئيسية صراحةً إضافةً
+إلى المنتج. category_filter_requested يصف طلب الفئة الصريح، لا تصنيف
+المنتج المستنتج ولا مكان استخدامه.
 
 أعد النموذج التالي:
 {{
   "canonical_request": "",
   "request_type": "unsupported",
+  "cache_search_terms": [],
   "keywords": [],
   "keyword_groups": [],
   "category": null,
@@ -3716,10 +4089,13 @@ category عامًا مثل accessories كتخمين عن استعمال المن
 
 ضع كلمات البحث بالعربية والإنجليزية عند الحاجة داخل keywords.
 لا تضع كلمات الطلب العامة مثل: أرخص، أفضل، عرض، سعر، دولار، هاتف، phone
-داخل keywords لطلب منتج محدد. عند وجود خطأ إملائي، أعد الاسم المصحح
-والصيغ البديلة المحتملة للمنتج داخل keywords. للطلبات عن فئة، category
-مطلوب واستخدم كلمات الفئة فقط. استخرج اسم المنتج من وسط الجملة حتى لو
-سبقه أو لحقه شرح طويل.
+داخل keywords لطلب منتج محدد. عند DeepSeek، يجب أن تكون keywords و
+keyword_groups عبارات كاملة حرفيًا من قاموس العبارات النشط، لا مرادفات
+مخترعة أو كلمات مفردة. ضع الترجمات والمرادفات القصيرة للمنتج في
+cache_search_terms فقط للمساعدة على إيجاد عبارات القاموس؛ لا تُرسل هذا
+الحقل إلى البحث. عند وجود خطأ إملائي، افهمه ثم أعد العبارة الكاملة المطابقة
+للقاموس. للطلبات عن فئة، استخدم مفتاح saved_* المناسب دون كلمات منتج.
+استخرج اسم المنتج من وسط الجملة حتى لو سبقه أو لحقه شرح طويل.
 - required_specs يجب أن تحتوي فقط على شروط المواصفات الصريحة من نوع storage
   أو ram. مثال: [{{"type": "storage", "value": "256GB"}},
   {{"type": "ram", "value": "12GB"}}]. يجب اعتبار كل المواصفات شروطًا
@@ -3749,6 +4125,13 @@ category عامًا مثل accessories كتخمين عن استعمال المن
 لا تنشئ SQL ولا تضف مفاتيح خارج مخطط JSON؛ يمكن لسياق الخدمة إضافة
 category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا بالقيم
 المسموحة التي يحددها سياق DeepSeek.
+
+- «عروض مصباح» أو «عروض المصابيح» => product_best، لا home ولا saved_*؛
+  استخرج كل عبارات المصابيح الكاملة ذات الصلة من القاموس.
+- «عروض خاصة بالمنزل» أو «عروض للبيت» => category_cheapest مع
+  saved_subcategory=saved_home، حتى لو لم ترد كلمة «المنزل» حرفيًا.
+- «عروض جهاز فحص السيارات» => product_best؛ أخرج عبارات القاموس الكاملة
+  التي تصف قارئ/جهاز فحص السيارات، لا عبارة «scanner» وحدها.
 
 أمثلة:
 - "عروض الهواتف الاقل من 100$" و"عروض هواتف بسعر اقل من 100$" لهما
@@ -3790,6 +4173,11 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
         )
     result_provider = getattr(result, "provider", None)
     canonical_request = _canonical_user_request(result, compact_text)
+    semantic_cache_terms = (
+        _deepseek_product_search_terms(result, canonical_request)
+        if result_provider == "DeepSeek"
+        else []
+    )
     # The original wording is input to the AI, not a second set of lexical
     # constraints on its semantic interpretation. Fall back only if absent.
     category_request_text = canonical_request
@@ -3948,6 +4336,33 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
         # search. Keep category filtering only when the local parser also
         # finds a category constraint in the user's text.
         category_filter_requested = False
+    if result_provider == "DeepSeek" and local_product_signal:
+        explicit_group_constraint = bool(
+            re.search(
+                r"(?:فئة|الفئة|قسم|القسم|مجموعة|المجموعة|تصنيف|"
+                r"category|categories|"
+                r"(?:ضمن|داخل)\s+(?:ال)?(?:عروض|فئة|قسم|مجموعة)|"
+                r"within\s+(?:the\s+)?category|in\s+the\s+category)",
+                canonical_request,
+                re.IGNORECASE,
+            )
+        )
+        if not explicit_group_constraint:
+            # DeepSeek sometimes mistakes an item's natural taxonomy for a
+            # user-selected saved-offer category. Keep the category only
+            # when the product and category are both requested explicitly.
+            category_filter_requested = False
+    if (
+        result_provider == "DeepSeek"
+        and local_product_signal
+        and not category_filter_requested
+    ):
+        # Product types search phrase matches across saved-offer groups.
+        # Restricting them to an inferred group changes the requested product.
+        normalized.pop("saved_subcategory", None)
+        normalized.pop("saved_subcategories", None)
+        normalized.pop("saved_category", None)
+        normalized.pop("saved_categories", None)
     should_retry_gemini_phrase_match = (
         is_closed_vocabulary_result
         and not broad_saved_category_request
@@ -3987,6 +4402,7 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
                 if is_closed_vocabulary_result
                 else None
             ),
+            semantic_terms=semantic_cache_terms,
         )
     explicit_category_search = (
         is_closed_vocabulary_result
@@ -4090,6 +4506,10 @@ category_filter_requested فقط. لا تستخدم مفاتيح saved_* إلا 
         normalized,
         category_request_text,
     )
+    if result_provider == "DeepSeek":
+        normalized["category_filter_requested"] = (
+            category_filter_requested
+        )
     return normalized
 
 

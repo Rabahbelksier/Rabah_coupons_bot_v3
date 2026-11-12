@@ -2231,7 +2231,16 @@ def _is_broad_product_request(intent, keywords):
     representative offer per model. A model or product name remains allowed
     to return its different offers.
     """
-    category = _infer_category(intent.get("category"), keywords)
+    category = intent.get("category")
+    if category is None and (
+        intent.get("category_filter_requested") is False
+        or intent.get("saved_category")
+        or intent.get("saved_categories")
+        or intent.get("saved_subcategory")
+        or intent.get("saved_subcategories")
+    ):
+        return False
+    category = _infer_category(category, keywords)
     if not category:
         return False
     category_terms = {
@@ -2984,8 +2993,24 @@ def _post_match_score(post, intent, keywords):
     category = (
         None
         if intent.get("official_categories")
-        else _infer_category(intent.get("category"), keywords)
+        else intent.get("category")
     )
+    if category is None and not intent.get("official_categories"):
+        saved_category_constraint = bool(
+            intent.get("saved_category")
+            or intent.get("saved_categories")
+            or intent.get("saved_subcategory")
+            or intent.get("saved_subcategories")
+        )
+        prevent_inferred_category = (
+            request_type in _PRODUCT_REQUEST_TYPES
+            and (
+                intent.get("category_filter_requested") is False
+                or saved_category_constraint
+            )
+        )
+        if not prevent_inferred_category:
+            category = _infer_category(None, keywords)
     if request_type in _PRODUCT_REQUEST_TYPES:
         product_score = _specific_product_score(
             keywords,

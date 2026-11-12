@@ -4216,6 +4216,41 @@ class DatabaseSearchTests(unittest.TestCase):
         self.assertIsNone(_post_match_score(over_budget_phone, intent, []))
         self.assertIsNone(_post_match_score(unrelated, intent, []))
 
+    def test_deepseek_product_phrase_group_does_not_infer_category_from_title(self):
+        from core.db import _post_match_score
+
+        night_lamp = (
+            "LED Star Moon Planet Projector Night Light USB Ambient "
+            "Projection Lamp Home Decor Background Light"
+        )
+        car_headlight = (
+            "Heyword Car LED Headlight H4 H7 H1 Fog Light"
+        )
+        intent = {
+            "request_type": "product_best",
+            "category": None,
+            "category_filter_requested": False,
+            "keywords": [night_lamp, car_headlight],
+            "keyword_groups": [[night_lamp, car_headlight]],
+        }
+        home_post = {
+            "title": night_lamp,
+            "category": "other",
+            "second_level_category_name": "Night Lights",
+        }
+        vehicle_post = {
+            "title": car_headlight,
+            "category": "other",
+            "second_level_category_name": "Car Lights",
+        }
+
+        self.assertIsNotNone(
+            _post_match_score(home_post, intent, intent["keywords"])
+        )
+        self.assertIsNotNone(
+            _post_match_score(vehicle_post, intent, intent["keywords"])
+        )
+
     def test_exact_product_with_unmapped_official_category_uses_title_category(self):
         from core.db import _post_match_score
 

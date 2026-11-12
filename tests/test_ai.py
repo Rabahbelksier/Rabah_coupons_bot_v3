@@ -16,6 +16,7 @@ from core.ai import (
     _call_gemini,
     _create_gemini_keyword_cache,
     _deepseek_request_context,
+    _deepseek_cache_phrase_candidates,
     _gemini_official_category_cache_context,
     _gemini_keyword_cache_state_hash,
     _gemini_keyword_cache_context,
@@ -28,6 +29,7 @@ from core.ai import (
     _extract_shipping_country_from_text,
     _extract_offer_type_from_text,
     _local_parse_user_request,
+    _local_product_request_type,
     _normalize_keyword_groups,
     _saved_special_categories_in_text,
     _special_category_request_is_broad,
@@ -1818,7 +1820,49 @@ class AiParsingTests(unittest.TestCase):
         self.assertIn("الفئات الرئيسية السبعة عشر", context["system_prompt"])
         self.assertIn("لا تضع category=accessories", context["system_prompt"])
         self.assertIn("هو جهاز نفخ محدد", context["system_prompt"])
+        self.assertIn("«عروض مصابيح» طلب نوع منتج", context["system_prompt"])
+        self.assertIn("المنزل/البيت إلى saved_home", context["system_prompt"])
         load_snapshot.assert_called_once_with()
+
+    def test_local_parser_distinguishes_product_type_from_home_category(self):
+        self.assertEqual(
+            _local_product_request_type("اريد عروض على المصابيح"),
+            "product_best",
+        )
+        self.assertIsNone(
+            _local_product_request_type("اريد عروض خاصة بالمنزل")
+        )
+        self.assertIsNone(_local_product_request_type("اريد عروض المنزل"))
+
+    def test_deepseek_cache_candidate_shortlist_keeps_exact_full_phrases(self):
+        scanner = (
+            "Popular ELM327 WiFi OBD2 Diagnostic Scanner V1.5 Car"
+        )
+        lamp = (
+            "LED Star Moon Planet Projector Night Light USB Ambient "
+            "Projection Lamp Home Decor Background Light for Live "
+            "Streaming Photograph"
+        )
+        unrelated = (
+            "AJAZZ AF98 Wired/Wireless Keyboard Three-Mode RGB Mixed Light"
+        )
+        screen = "écran LED"
+        candidates = _deepseek_cache_phrase_candidates(
+            [unrelated, scanner, lamp, screen],
+            [
+                "car diagnostic scanner",
+                "OBD2 scanner",
+                "lamp",
+                "light bulb",
+                "night light",
+                "LED",
+            ],
+        )
+
+        self.assertIn(scanner, candidates)
+        self.assertIn(lamp, candidates)
+        self.assertIn(unrelated, candidates)
+        self.assertNotIn(screen, candidates)
 
     def test_deepseek_saved_offer_category_is_validated_and_required_for_category_search(self):
         result = _normalize_user_request_result(
@@ -1842,7 +1886,7 @@ class AiParsingTests(unittest.TestCase):
         self.assertIsNone(result["category"])
 
     @patch("core.ai._call_ai")
-    def test_deepseek_product_keeps_saved_group_and_drops_guessed_accessories(
+    def test_deepseek_product_drops_unrequested_saved_group_and_guessed_accessories(
         self, call_ai,
     ):
         phrase = (
@@ -1879,13 +1923,101 @@ class AiParsingTests(unittest.TestCase):
 
         self.assertEqual(call_ai.call_count, 2)
         self.assertEqual(result["request_type"], "product_best")
-        self.assertEqual(result["saved_subcategory"], "saved_vehicles")
+        self.assertNotIn("saved_subcategory", result)
+        self.assertFalse(result["category_filter_requested"])
         self.assertIsNone(result["category"])
         self.assertNotIn("official_categories", result)
         self.assertIn(phrase, result["keyword_groups"][0])
         self.assertIn(phrase, result["keywords"])
         self.assertEqual(result["max_price"], 40)
         self.assertEqual(result["shipping_country"], "France")
+
+    @patch("core.ai._call_ai")
+    def test_deepseek_lamp_request_keeps_product_phrases_not_home_category(
+        self,
+        call_ai,
+    ):
+        lamp_phrases = [
+            (
+                "Heyword 22000lm 160W 1860 CSP Chip 3000k/4300k/6000k/"
+                "8000k Car LED Headlight H4 H7 H1 LED Headlights 9005 "
+                "H7 H9 H11 Fog Light"
+            ),
+            (
+                "LED Star Moon Planet Projector Night Light USB Ambient "
+                "Projection Lamp Home Decor Background Light for Live "
+                "Streaming Photograph"
+            ),
+        ]
+        primary = AIResponse(
+            {
+                "canonical_request": "عروض المصابيح",
+                "request_type": "category_cheapest",
+                "category": "home",
+                "saved_subcategory": "saved_home",
+                "category_filter_requested": False,
+                "cache_search_terms": [
+                    "lamp", "light bulb", "headlight", "night light",
+                ],
+                "keywords": [],
+            },
+            provider="DeepSeek",
+        )
+        primary.keyword_cache_active = True
+        primary.keyword_cache_keywords = lamp_phrases + [
+            "AJAZZ AF98 Wired/Wireless Keyboard Three-Mode RGB Mixed Light"
+        ]
+        semantic = AIResponse(
+            {
+                "keywords": lamp_phrases,
+                "keyword_groups": [
+                    [lamp_phrases[0]],
+                    [lamp_phrases[1]],
+                ],
+            },
+            provider="DeepSeek",
+        )
+        semantic.keyword_cache_active = True
+        semantic.keyword_cache_keywords = primary.keyword_cache_keywords
+        call_ai.side_effect = [primary, semantic]
+
+        result = parse_user_request("اريد عروض على المصابيح")
+
+        self.assertEqual(call_ai.call_count, 2)
+        self.assertEqual(result["request_type"], "product_best")
+        self.assertEqual(result["keywords"], lamp_phrases)
+        self.assertEqual(result["keyword_groups"], [lamp_phrases])
+        self.assertIsNone(result["category"])
+        self.assertFalse(result["category_filter_requested"])
+        self.assertNotIn("saved_subcategory", result)
+        self.assertNotIn("saved_categories", result)
+        override = call_ai.call_args.kwargs["request_context_override"]
+        self.assertIn(lamp_phrases[0], override["allowed_keywords"])
+        self.assertIn(lamp_phrases[1], override["allowed_keywords"])
+
+    @patch("core.ai._call_ai")
+    def test_deepseek_semantic_home_category_uses_saved_home_bucket(self, call_ai):
+        response = AIResponse(
+            {
+                "canonical_request": "عروض خاصة بالمنزل",
+                "request_type": "category_cheapest",
+                "category": "home",
+                "category_filter_requested": True,
+                "keywords": [],
+            },
+            provider="DeepSeek",
+        )
+        response.keyword_cache_active = True
+        response.keyword_cache_keywords = []
+        call_ai.return_value = response
+
+        result = parse_user_request("اريد عروض خاصة بالمنزل")
+
+        self.assertEqual(result["request_type"], "category_cheapest")
+        self.assertEqual(result["saved_subcategory"], "saved_home")
+        self.assertIsNone(result["category"])
+        self.assertEqual(result["keywords"], [])
+        self.assertEqual(call_ai.call_count, 1)
 
     def test_deepseek_category_context_uses_official_names_without_gemini_cache(
         self,
@@ -1984,7 +2116,7 @@ class AiParsingTests(unittest.TestCase):
         self.assertEqual(call_ai.call_count, 2)
         self.assertEqual(set(result["keyword_groups"][0]), set(phrases))
         self.assertEqual(result["keywords"], phrases[1:7])
-        self.assertIn("حتى آخر عبارة", call_ai.call_args.args[0])
+        self.assertIn("افحص المرشحين كاملين", call_ai.call_args.args[0])
         self.assertIn(phrases[-1], primary.keyword_cache_keywords)
 
     @patch("core.ai._call_ai")
@@ -2244,11 +2376,17 @@ class AiParsingTests(unittest.TestCase):
                 )
                 phrase_prompt = call_ai.call_args.args[0]
                 self.assertIn(user_text, phrase_prompt)
-                self.assertIn("لا تشترط تطابق الكلمات حرفيًا", phrase_prompt)
-                self.assertIn(
-                    "قارن هوية المنتج لا مجرد الترابط",
-                    phrase_prompt,
-                )
+                if provider_name == "DeepSeek":
+                    self.assertIn("افحص المرشحين كاملين", phrase_prompt)
+                else:
+                    self.assertIn(
+                        "لا تشترط تطابق الكلمات حرفيًا",
+                        phrase_prompt,
+                    )
+                    self.assertIn(
+                        "قارن هوية المنتج لا مجرد الترابط",
+                        phrase_prompt,
+                    )
                 call_ai.reset_mock()
 
     @patch("core.ai.get_gemini_keyword_cache_snapshot")
@@ -2260,7 +2398,9 @@ class AiParsingTests(unittest.TestCase):
     ):
         cached_phrase = "Samsung Galaxy S24"
         get_snapshot.return_value = {"keywords": [cached_phrase]}
-        user_text = "أريد أفضل عرض Samsung S24 للهواتف بأقل من 500 دولار"
+        user_text = (
+            "أريد أفضل عرض Samsung S24 ضمن فئة الهواتف بأقل من 500 دولار"
+        )
 
         for provider_name in ("Gemini", "DeepSeek"):
             with self.subTest(provider=provider_name):
@@ -2300,17 +2440,26 @@ class AiParsingTests(unittest.TestCase):
 
                 self.assertEqual(result["request_type"], "product_price_range")
                 self.assertEqual(result["keywords"], [cached_phrase])
-                self.assertEqual(result["category"], "phones")
-                self.assertEqual(
-                    result["official_categories"],
-                    ["Mobile Phones"],
-                )
                 self.assertEqual(result["max_price"], 500)
-                self.assertEqual(call_ai.call_count, 3)
-                self.assertEqual(
-                    call_ai.call_args.kwargs["request_kind"],
-                    "user_category",
-                )
+                if provider_name == "DeepSeek":
+                    self.assertEqual(
+                        result["saved_subcategory"],
+                        "saved_phones",
+                    )
+                    self.assertIsNone(result["category"])
+                    self.assertNotIn("official_categories", result)
+                    self.assertEqual(call_ai.call_count, 2)
+                else:
+                    self.assertEqual(result["category"], "phones")
+                    self.assertEqual(
+                        result["official_categories"],
+                        ["Mobile Phones"],
+                    )
+                    self.assertEqual(call_ai.call_count, 3)
+                    self.assertEqual(
+                        call_ai.call_args.kwargs["request_kind"],
+                        "user_category",
+                    )
                 call_ai.reset_mock()
 
     @patch("core.ai.get_gemini_keyword_cache_snapshot")

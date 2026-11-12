@@ -231,6 +231,49 @@ class AIServiceTests(unittest.TestCase):
         )
         self.assertEqual(post.call_count, 3)
 
+    @patch("core.ai_service.requests.post")
+    def test_deepseek_context_override_limits_phrase_matching_vocabulary(self, post):
+        service = self._service()
+        loader = unittest.mock.Mock(
+            return_value={"system_prompt": "FULL VOCABULARY"}
+        )
+        provider = _OpenAICompatibleProvider(
+            "DeepSeek",
+            "test-key",
+            "deepseek-flash",
+            "https://api.deepseek.com/chat/completions",
+            request_context_loader=loader,
+        )
+        response = unittest.mock.Mock()
+        response.status_code = 200
+        response.ok = True
+        response.headers = {}
+        response.json.return_value = {
+            "choices": [{"message": {"content": '{"keywords":[]}'}}],
+            "usage": {},
+        }
+        post.return_value = response
+        service._providers = (provider,)
+
+        result = service.generate_json(
+            "Match this product",
+            request_kind="user",
+            provider_name="DeepSeek",
+            request_context_override={
+                "system_prompt": "SHORT CANDIDATE LIST",
+                "allowed_keywords": ["Exact cached phrase"],
+            },
+        )
+
+        loader.assert_not_called()
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["messages"][0]["content"], "SHORT CANDIDATE LIST")
+        self.assertTrue(result.keyword_cache_active)
+        self.assertEqual(
+            result.keyword_cache_keywords,
+            ["Exact cached phrase"],
+        )
+
     def test_disabled_deepseek_is_skipped(self):
         service = self._service()
         provider = _FakeProvider("DeepSeek", [{"ok": True}])
