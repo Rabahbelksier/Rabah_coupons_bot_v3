@@ -223,6 +223,27 @@ def _extract_main_product_links(message_text):
     return links
 
 
+def _extract_main_product_title(message_text):
+    """Read the product title from the original offer message."""
+    lines = (message_text or "").splitlines()
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"\s*📦\s*تخفيض على:\s*", line):
+            if index + 1 < len(lines):
+                title = lines[index + 1].strip()
+                title = re.sub(r"</?code>", "", title, flags=re.IGNORECASE)
+                if title:
+                    return html.unescape(title)
+            return "منتج AliExpress"
+
+        fallback_match = re.fullmatch(
+            r"\s*📦\s*تخفيض على\s+(.+?)\s*",
+            line,
+        )
+        if fallback_match:
+            return html.unescape(fallback_match.group(1))
+    return "منتج AliExpress"
+
+
 def _get_initial_offer_image_id(message):
     """Keep the image already delivered with the initial offer."""
     photos = getattr(message, "photo", None) or []
@@ -258,27 +279,31 @@ def _offer_lines(state, offer, offer_number, total_offers):
         link = state.get("main_links", {}).get(link_type)
         if not link:
             return "المنتج الرئيسي"
-        return f'<a href="{html.escape(link, quote=True)}">المنتج الرئيسي</a>'
+        return html.escape(link, quote=True)
 
     lines = [
-        "🛒 <b>عرض السلة الذكية AI</b>",
-        f"📦 التجميعة: <b>{offer_number} من {total_offers}</b>",
+        "غـــيـــر الجديــــــــد مـع طـريــقـة الـسـلـة😍",
+        f"🔥 تخفيض على {html.escape(state.get('product_title') or 'منتج AliExpress')}",
         f"💰 السعر النهائي: <b>{result['final_price']:.2f}$</b>",
         f"🎟️ الكوبون: <b>{state['coupon']['label']}</b>",
         f"💸 نصيب المنتج الرئيسي من الكوبون: {result['partial_coupon']:.2f}$",
+    ]
+    seller_discount = state.get("seller_discount", Decimal("0"))
+    if seller_discount > 0:
+        lines.append(f"🎟️قسيمة المتجر : ${seller_discount:.2f}")
+    lines.extend([
         "➕ أضف منتجك الرئيسي الى السلة",
         f"🔗 رابط عملات: {main_product_link('coins')}",
         f"🔗 رابط مباشر: {main_product_link('direct')}",
         "",
         "➕ أضف المنتجات التالية إلى السلة:",
-    ]
+    ])
     for item in offer["additions"]:
         product = item["product"]
         quantity = item["quantity"]
         quantity_text = f" — الكمية: {quantity}" if quantity > 1 else " — الكمية: 1"
         lines.append(
-            f"• <a href=\"{html.escape(product['link'], quote=True)}\">"
-            f"منتج إضافي</a>{quantity_text}"
+            f"• {html.escape(product['link'], quote=True)}{quantity_text}"
         )
     lines.extend([
         "",
@@ -296,6 +321,9 @@ def _offer_lines(state, offer, offer_number, total_offers):
         "🔸لاتنسى حجز كوبونات البائع للمنتجات الاضافية والمنتج الرئيسي ان وجدت",
         "🔸اذا استعملت رابط العملات لمنتجك الرئيسي بدلا من الرابط المباشر قم بتغيير دولة التطبيق دولة اجنبية للاستفادة من تخفيض العملات",
         "🔸عند تغيير الدولة يجب التاكد من ان المنتجات الاضافية والمنتج الرئيسي تتوفر على شحن الى تلك الدول وذالك فقط لتستطيع الدخول الى صفحة الدفع",
+        "",
+        "🛒 <b>عرض السلة الذكية AI</b>",
+        f"📦 التجميعة: <b>{offer_number} من {total_offers}</b>",
     ])
     return lines
 
@@ -448,6 +476,7 @@ async def start_smart_cart(update, context, product_id):
         "coupons": coupons,
         "products": products,
         "main_links": _extract_main_product_links(message_text),
+        "product_title": _extract_main_product_title(message_text),
         "image_url": _get_saved_initial_offer_image(context, product_id, query.message),
         "chat_id": query.message.chat_id,
         "input_prompt_message_ids": [],
@@ -483,6 +512,7 @@ async def _show_coupon_choices(message, context):
     ]
     await message.reply_text(
         "🎟️ اختر الكوبون الذي تريد استعماله:",
+        "ان لم تجد الكوبون الذي تريد استعماله تواصل مع الادمن لاضافته @Rabahbelksier",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 

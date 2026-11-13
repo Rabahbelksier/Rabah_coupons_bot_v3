@@ -13,6 +13,7 @@ os.environ.setdefault("TELEGRAM_TOKEN", "123456:TEST")
 from core.smart_cart import (
     _get_initial_offer_image_id,
     _get_saved_initial_offer_image,
+    _extract_main_product_title,
     _offer_lines,
     calculate_offer,
     generate_qualifying_combinations,
@@ -21,6 +22,20 @@ from core.smart_cart import (
 
 
 class SmartCartCalculationTests(unittest.TestCase):
+    def test_product_title_is_extracted_from_initial_offer_message(self):
+        self.assertEqual(
+            _extract_main_product_title(
+                "📦تخفيض على:\nPortable <speaker> &amp; radio\n\nرابط"
+            ),
+            "Portable <speaker> & radio",
+        )
+
+    def test_product_title_uses_generic_fallback_when_initial_offer_has_no_title(self):
+        self.assertEqual(
+            _extract_main_product_title("📦 تخفيض على منتج AliExpress"),
+            "منتج AliExpress",
+        )
+
     def test_only_cart_row_id_one_can_have_multiple_units(self):
         products = [
             {
@@ -205,6 +220,8 @@ class SmartCartCalculationTests(unittest.TestCase):
             "shipping": Decimal("5"),
             "coupon": {"label": "30/300$", "discount": Decimal("30")},
             "main_links": {},
+            "product_title": "اسم المنتج",
+            "seller_discount": Decimal("12"),
         }
         offer = {
             "additions": additions,
@@ -221,6 +238,84 @@ class SmartCartCalculationTests(unittest.TestCase):
 
         self.assertIn("📦 اجمالي أسعار المنتجات قبل التخفيض: 307.31$", lines)
         self.assertIn("📦 اجمالي أسعار المنتجات بعد التخفيض: 262.31$", lines)
+        self.assertEqual(
+            lines[:6],
+            [
+                "غـــيـــر الجديــــــــد مـع طـريــقـة الـسـلـة😍",
+                "🔥 تخفيض على اسم المنتج",
+                "💰 السعر النهائي: <b>179.11$</b>",
+                "🎟️ الكوبون: <b>30/300$</b>",
+                "💸 نصيب المنتج الرئيسي من الكوبون: 20.89$",
+                "🎟️قسيمة المتجر : $12.00",
+            ],
+        )
+        self.assertEqual(
+            lines[-2:],
+            [
+                "🛒 <b>عرض السلة الذكية AI</b>",
+                "📦 التجميعة: <b>1 من 1</b>",
+            ],
+        )
+
+    def test_seller_coupon_line_is_omitted_when_value_is_zero(self):
+        state = {
+            "current_price": Decimal("195"),
+            "shipping": Decimal("5"),
+            "coupon": {"label": "30/300$", "discount": Decimal("30")},
+            "seller_discount": Decimal("0"),
+            "main_links": {},
+        }
+        offer = {
+            "additions": [],
+            "added_original_total": Decimal("100"),
+            "result": calculate_offer(
+                Decimal("195"),
+                state["coupon"],
+                [],
+                state["shipping"],
+            ),
+        }
+
+        lines = _offer_lines(state, offer, 1, 1)
+
+        self.assertNotIn("🎟️قسيمة المتجر : $0.00", lines)
+
+    def test_product_links_are_shown_as_urls_instead_of_linked_labels(self):
+        state = {
+            "current_price": Decimal("195"),
+            "shipping": Decimal("0"),
+            "coupon": {"label": "30/300$", "discount": Decimal("30")},
+            "main_links": {
+                "coins": "https://example.com/coins?a=1&b=2",
+                "direct": "https://example.com/main",
+            },
+        }
+        additions = [
+            {
+                "product": {
+                    "link": "https://example.com/extra?a=1&b=2",
+                    "final_price": Decimal("100"),
+                },
+                "quantity": 1,
+            }
+        ]
+        offer = {
+            "additions": additions,
+            "added_original_total": Decimal("100"),
+            "result": calculate_offer(
+                Decimal("195"),
+                state["coupon"],
+                additions,
+                state["shipping"],
+            ),
+        }
+
+        lines = _offer_lines(state, offer, 1, 1)
+
+        self.assertIn("🔗 رابط عملات: https://example.com/coins?a=1&amp;b=2", lines)
+        self.assertIn("🔗 رابط مباشر: https://example.com/main", lines)
+        self.assertIn("• https://example.com/extra?a=1&amp;b=2 — الكمية: 1", lines)
+        self.assertFalse(any("<a href=" in line for line in lines))
 
 
 if __name__ == "__main__":
