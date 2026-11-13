@@ -10,7 +10,7 @@ from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
 from config import AUTO_PUBLISH_CHANNEL_LINK
-from core.smart_cart import cancel_smart_cart
+from core.mode_state import cancel_smart_cart
 from core.db import (
     delete_user_chat_ids,
     get_activity_stats,

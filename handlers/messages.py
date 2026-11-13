@@ -4,6 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from services.queue_manager import enqueue_url
+from core.mode_state import cancel_smart_cart
 from core.smart_cart import handle_smart_cart_message
 from core.db import record_user_activity
 from handlers.admin import handle_admin_message
@@ -33,15 +34,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         getattr(user, "last_name", "") if user else "",
     )
     if update.message.text == MORE_DETAILS_BUTTON_TEXT:
+        await cancel_smart_cart(context)
         await send_help_menu(update.message)
         return
     if await handle_ai_search_button_message(update, context):
         return
-    if await handle_smart_cart_message(update, context):
-        return
     if await handle_saved_offers_reply_message(update, context):
         return
     if await handle_stale_saved_offers_message(update, context):
+        return
+    if await handle_smart_cart_message(update, context):
         return
     if await handle_ai_search_message(update, context):
         return

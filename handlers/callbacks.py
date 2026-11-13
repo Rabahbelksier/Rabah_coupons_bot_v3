@@ -13,6 +13,7 @@ from utils.app_promotion import (
     app_download_keyboard,
 )
 from utils.telegram import remove_pressed_button
+from core.mode_state import cancel_smart_cart
 from core.smart_cart import other_smart_cart_callback, select_coupon, start_smart_cart
 from handlers.ai_search import (
     _clear_ai_search_state,
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 async def app_promotion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await cancel_smart_cart(context)
     await remove_pressed_button(query)
     await query.message.reply_photo(
         photo=APP_PROMOTION_IMAGE_URL,
@@ -37,6 +39,7 @@ async def app_promotion_callback(update: Update, context: ContextTypes.DEFAULT_T
 async def product_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await cancel_smart_cart(context)
     await remove_pressed_button(query)
 
     product_id = query.data.split('_')[1]

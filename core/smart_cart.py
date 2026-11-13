@@ -12,6 +12,10 @@ from core.coupons import (
     parse_numeric_value,
 )
 from core.db import get_db_connection, is_feature_enabled
+from core.mode_state import (
+    cancel_smart_cart,
+    delete_smart_cart_prompts as _delete_input_prompts,
+)
 from core.product_prices import fetch_current_price
 from services.queue_manager import enqueue_url
 from utils.parser import extract_aliexpress_url
@@ -407,31 +411,6 @@ def _track_input_prompt(state, prompt_message):
     if prompt_message is None:
         return
     state.setdefault("input_prompt_message_ids", []).append(prompt_message.message_id)
-
-
-async def _delete_input_prompts(context, state):
-    """Delete the active value prompt and any correction messages."""
-    chat_id = state.get("chat_id")
-    message_ids = state.pop("input_prompt_message_ids", [])
-    if chat_id is None:
-        return
-
-    for message_id in message_ids:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-        except Exception:
-            # The user may have already deleted a message or Telegram may have
-            # expired the deletion window. Neither case should interrupt the flow.
-            logger.debug("Unable to delete smart cart prompt %s", message_id)
-
-
-async def cancel_smart_cart(context):
-    """Clear an unfinished smart cart when the user switches modes."""
-    state = context.user_data.get("smart_cart")
-    if state:
-        await _delete_input_prompts(context, state)
-    context.user_data.pop("smart_cart", None)
-    context.user_data.pop("smart_cart_offers", None)
 
 
 async def _send_input_prompt(message, state, text, image_url=None, parse_mode=None):

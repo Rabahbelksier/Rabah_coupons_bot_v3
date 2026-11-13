@@ -17,7 +17,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from config import AI_USER_REQUEST_TIMEOUT_SECONDS
-from core.smart_cart import cancel_smart_cart
+from core.mode_state import cancel_smart_cart
 from core.ai import (
     GeminiError,
     _local_parse_user_request,
@@ -229,6 +229,7 @@ def _is_saved_offers_button_text(text):
 
 async def _reply_to_expired_ai_session(message, context):
     """Replace Telegram's locally retained keyboard without running a search."""
+    await cancel_smart_cart(context)
     _clear_ai_search_state(context)
     await message.reply_text(
         AI_SEARCH_SESSION_EXPIRED_TEXT,

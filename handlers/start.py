@@ -4,7 +4,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from core.db import save_user
-from core.smart_cart import cancel_smart_cart
+from core.mode_state import cancel_smart_cart
 from services.meta_tracking import start_attribution
 from handlers.ai_search import AI_SEARCH_BUTTON_TEXT, _clear_ai_search_state
 from handlers.help import (

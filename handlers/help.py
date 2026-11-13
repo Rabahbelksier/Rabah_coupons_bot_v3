@@ -1,7 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from core.smart_cart import cancel_smart_cart
+from core.mode_state import cancel_smart_cart
 
 
 MORE_DETAILS_BUTTON_TEXT = "المزيد من التفاصيل"

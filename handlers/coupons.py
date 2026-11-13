@@ -2,7 +2,7 @@ import asyncio
 import html
 
 from utils.telegram import remove_pressed_button
-from core.smart_cart import cancel_smart_cart
+from core.mode_state import cancel_smart_cart
 
 
 NO_COUPONS_TEXT = "❌ لا تتوفر رموز ترويجية حاليا، يرجى المحاولة لاحقا."
