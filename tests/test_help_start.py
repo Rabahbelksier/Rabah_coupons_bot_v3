@@ -48,7 +48,7 @@ class HelpAndStartTests(unittest.IsolatedAsyncioTestCase):
             message=SimpleNamespace(reply_text=reply_text),
         )
 
-        await help_command(update, SimpleNamespace())
+        await help_command(update, SimpleNamespace(user_data={}))
 
         reply_text.assert_awaited_once()
         self.assertEqual(reply_text.await_args.args[0], HELP_MENU_TEXT)

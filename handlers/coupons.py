@@ -2,6 +2,7 @@ import asyncio
 import html
 
 from utils.telegram import remove_pressed_button
+from core.smart_cart import cancel_smart_cart
 
 
 NO_COUPONS_TEXT = "❌ لا تتوفر رموز ترويجية حاليا، يرجى المحاولة لاحقا."
@@ -71,6 +72,7 @@ async def send_coupons(message):
 
 
 async def coupons_command(update, context):
+    await cancel_smart_cart(context)
     await send_coupons(update.message)
 
 
@@ -78,4 +80,5 @@ async def coupons_callback(update, context):
     query = update.callback_query
     await query.answer()
     await remove_pressed_button(query)
+    await cancel_smart_cart(context)
     await send_coupons(query.message)

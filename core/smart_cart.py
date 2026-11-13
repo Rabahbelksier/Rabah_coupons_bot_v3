@@ -425,6 +425,15 @@ async def _delete_input_prompts(context, state):
             logger.debug("Unable to delete smart cart prompt %s", message_id)
 
 
+async def cancel_smart_cart(context):
+    """Clear an unfinished smart cart when the user switches modes."""
+    state = context.user_data.get("smart_cart")
+    if state:
+        await _delete_input_prompts(context, state)
+    context.user_data.pop("smart_cart", None)
+    context.user_data.pop("smart_cart_offers", None)
+
+
 async def _send_input_prompt(message, state, text, image_url=None, parse_mode=None):
     """Send and track a smart cart value prompt."""
     if image_url:
@@ -447,6 +456,7 @@ async def _send_input_prompt(message, state, text, image_url=None, parse_mode=No
 async def start_smart_cart(update, context, product_id):
     query = update.callback_query
     await query.answer()
+    await cancel_smart_cart(context)
     if not await asyncio.to_thread(is_feature_enabled, "smart_cart"):
         await query.message.reply_text(
             "🤖 أداة السلة الذكية متوقفة مؤقتًا 🔄 يرجى المحاولة لاحقًا"

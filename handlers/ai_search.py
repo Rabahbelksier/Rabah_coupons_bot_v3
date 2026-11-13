@@ -17,6 +17,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from config import AI_USER_REQUEST_TIMEOUT_SECONDS
+from core.smart_cart import cancel_smart_cart
 from core.ai import (
     GeminiError,
     _local_parse_user_request,
@@ -319,6 +320,7 @@ async def _activate_ai_search(message, context):
     if not await asyncio.to_thread(is_feature_enabled, "ai_search"):
         await message.reply_text(AI_SEARCH_DISABLED_TEXT)
         return False
+    await cancel_smart_cart(context)
     _clear_ai_search_state(context)
     context.user_data["ai_search_active"] = True
     await _hide_saved_offers_reply_keyboard(message, context)

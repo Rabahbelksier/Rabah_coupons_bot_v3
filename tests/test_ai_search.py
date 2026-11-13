@@ -680,6 +680,10 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_reply_button_enters_ai_with_saved_offers_button(self):
         context = FakeContext()
         message = FakeMessage(AI_SEARCH_BUTTON_TEXT)
+        context.user_data.update({
+            "smart_cart": {"state": "coupon", "coupons": []},
+            "smart_cart_offers": {"offers": []},
+        })
 
         handled = await handle_ai_search_button_message(
             SimpleNamespace(effective_message=message),
@@ -688,11 +692,44 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         self.assertTrue(context.user_data["ai_search_active"])
+        self.assertNotIn("smart_cart", context.user_data)
+        self.assertNotIn("smart_cart_offers", context.user_data)
         markup = message.replies[-1][1]
         self.assertIsInstance(markup, InlineKeyboardMarkup)
         self.assertEqual(
             markup.inline_keyboard[0][0].text,
             SAVED_OFFERS_BUTTON_TEXT,
+        )
+
+    async def test_ai_entry_message_preempts_pending_smart_cart(self):
+        context = FakeContext()
+        context.user_data["smart_cart"] = {
+            "state": "coupon",
+            "coupons": [],
+        }
+        message = FakeMessage(AI_SEARCH_BUTTON_TEXT)
+        update = SimpleNamespace(
+            message=message,
+            effective_message=message,
+            effective_user=None,
+            effective_chat=SimpleNamespace(id=123),
+        )
+
+        with patch("handlers.messages.record_user_activity"), patch(
+            "handlers.ai_search.is_feature_enabled",
+            return_value=True,
+        ):
+            await handle_message(update, context)
+
+        self.assertTrue(context.user_data["ai_search_active"])
+        self.assertNotIn("smart_cart", context.user_data)
+        self.assertIn(AI_SEARCH_HELP_TEXT, [reply[0] for reply in message.replies])
+        self.assertNotIn(
+            "🎟️ <b>اختيار الكوبون</b>\n\n"
+            "يرجى اختيار أحد أزرار الكوبونات الظاهرة في الرسالة السابقة.\n"
+            "لا تقم بكتابة قيمة أو رقم الكوبون في هذه المرحلة.\n\n"
+            "بعد اختيار الكوبون سيطلب منك البوت إدخال قيمة كوبون البائع.",
+            [reply[0] for reply in message.replies],
         )
 
     async def test_offer_ai_button_enters_ai_mode_like_reply_keyboard(self):

@@ -14,7 +14,11 @@ from utils.app_promotion import (
 )
 from utils.telegram import remove_pressed_button
 from core.smart_cart import other_smart_cart_callback, select_coupon, start_smart_cart
-from handlers.ai_search import ai_next_callback, ask_ai_callback
+from handlers.ai_search import (
+    _clear_ai_search_state,
+    ai_next_callback,
+    ask_ai_callback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +76,7 @@ async def product_details_callback(update: Update, context: ContextTypes.DEFAULT
 
 
 async def smart_cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _clear_ai_search_state(context)
     product_id = update.callback_query.data.split("_")[-1]
     await start_smart_cart(update, context, product_id)
 

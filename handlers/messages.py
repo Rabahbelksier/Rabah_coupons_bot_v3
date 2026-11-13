@@ -32,12 +32,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         getattr(user, "first_name", "") if user else "",
         getattr(user, "last_name", "") if user else "",
     )
-    if await handle_smart_cart_message(update, context):
-        return
     if update.message.text == MORE_DETAILS_BUTTON_TEXT:
         await send_help_menu(update.message)
         return
     if await handle_ai_search_button_message(update, context):
+        return
+    if await handle_smart_cart_message(update, context):
         return
     if await handle_saved_offers_reply_message(update, context):
         return

@@ -1,6 +1,8 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from core.smart_cart import cancel_smart_cart
+
 
 MORE_DETAILS_BUTTON_TEXT = "المزيد من التفاصيل"
 MORE_DETAILS_CALLBACK = "more_details"
@@ -97,18 +99,21 @@ async def send_help_menu(message):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await cancel_smart_cart(context)
     await send_help_menu(update.message)
 
 
 async def more_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await cancel_smart_cart(context)
     await send_help_menu(query.message)
 
 
 async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    await cancel_smart_cart(context)
 
     topic_text = {
         "help_basic": BASIC_USAGE_TEXT,

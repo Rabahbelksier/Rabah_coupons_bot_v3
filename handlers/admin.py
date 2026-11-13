@@ -10,6 +10,7 @@ from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
 from config import AUTO_PUBLISH_CHANNEL_LINK
+from core.smart_cart import cancel_smart_cart
 from core.db import (
     delete_user_chat_ids,
     get_activity_stats,
@@ -1300,6 +1301,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(ADMIN_CONTACT_TEXT)
         return
 
+    await cancel_smart_cart(context)
     await _hide_saved_offers_reply_keyboard(update.message, context)
     _clear_ai_search_state(context)
     context.user_data["admin_mode"] = True
