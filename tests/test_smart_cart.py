@@ -1,7 +1,8 @@
 import os
 import unittest
 from decimal import Decimal
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 # smart_cart imports the application configuration, which requires these
 # values during module import. Tests use placeholders and never make API calls.
@@ -18,7 +19,38 @@ from core.smart_cart import (
     calculate_offer,
     generate_qualifying_combinations,
     get_cart_products,
+    _show_coupon_choices,
 )
+
+
+class SmartCartFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_coupon_choice_message_includes_admin_contact_and_buttons(self):
+        message = SimpleNamespace(reply_text=AsyncMock())
+        context = SimpleNamespace(
+            user_data={
+                "smart_cart": {
+                    "current_price": Decimal("50"),
+                    "coupons": [
+                        {
+                            "label": "30/300$",
+                            "threshold": Decimal("300"),
+                        }
+                    ],
+                }
+            }
+        )
+
+        await _show_coupon_choices(message, context)
+
+        message.reply_text.assert_awaited_once()
+        self.assertEqual(
+            message.reply_text.await_args.args[0],
+            "🎟️ اختر الكوبون الذي تريد استعماله:\n"
+            "ان لم تجد الكوبون الذي تريد استعماله تواصل مع الادمن لاضافته @Rabahbelksier",
+        )
+        markup = message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(markup.inline_keyboard[0][0].text, "30/300$")
+        self.assertEqual(markup.inline_keyboard[0][0].callback_data, "smart_coupon_0")
 
 
 class SmartCartCalculationTests(unittest.TestCase):

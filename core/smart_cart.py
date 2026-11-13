@@ -508,7 +508,8 @@ async def _show_coupon_choices(message, context):
         for index, coupon in enumerate(eligible)
     ]
     await message.reply_text(
-        "🎟️ اختر الكوبون الذي تريد استعماله:",
+        "🎟️ اختر الكوبون الذي تريد استعماله:\n"
+        "ان لم تجد الكوبون الذي تريد استعماله تواصل مع الادمن لاضافته @Rabahbelksier",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
