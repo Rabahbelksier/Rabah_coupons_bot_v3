@@ -239,16 +239,19 @@ class SmartCartCalculationTests(unittest.TestCase):
         self.assertIn("📦 اجمالي أسعار المنتجات قبل التخفيض: 307.31$", lines)
         self.assertIn("📦 اجمالي أسعار المنتجات بعد التخفيض: 262.31$", lines)
         self.assertEqual(
-            lines[:6],
+            lines[:7],
             [
                 "غـــيـــر الجديــــــــد مـع طـريــقـة الـسـلـة😍",
                 "🔥 تخفيض على اسم المنتج",
+                "",
                 "💰 السعر النهائي: <b>179.11$</b>",
                 "🎟️ الكوبون: <b>30/300$</b>",
                 "💸 نصيب المنتج الرئيسي من الكوبون: 20.89$",
                 "🎟️قسيمة المتجر : $12.00",
             ],
         )
+        main_product_heading = lines.index("➕ أضف منتجك الرئيسي الى السلة")
+        self.assertEqual(lines[main_product_heading - 1], "")
         self.assertEqual(
             lines[-2:],
             [

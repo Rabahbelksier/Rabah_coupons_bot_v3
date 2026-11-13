@@ -284,6 +284,7 @@ def _offer_lines(state, offer, offer_number, total_offers):
     lines = [
         "غـــيـــر الجديــــــــد مـع طـريــقـة الـسـلـة😍",
         f"🔥 تخفيض على {html.escape(state.get('product_title') or 'منتج AliExpress')}",
+        "",
         f"💰 السعر النهائي: <b>{result['final_price']:.2f}$</b>",
         f"🎟️ الكوبون: <b>{state['coupon']['label']}</b>",
         f"💸 نصيب المنتج الرئيسي من الكوبون: {result['partial_coupon']:.2f}$",
@@ -292,6 +293,7 @@ def _offer_lines(state, offer, offer_number, total_offers):
     if seller_discount > 0:
         lines.append(f"🎟️قسيمة المتجر : ${seller_discount:.2f}")
     lines.extend([
+        "",
         "➕ أضف منتجك الرئيسي الى السلة",
         f"🔗 رابط عملات: {main_product_link('coins')}",
         f"🔗 رابط مباشر: {main_product_link('direct')}",
