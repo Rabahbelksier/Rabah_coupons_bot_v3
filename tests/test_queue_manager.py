@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 from telegram import ReplyKeyboardMarkup
 
 from handlers.ai_search import AI_SEARCH_BUTTON_TEXT
+from core.mode_state import AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY
 from services.queue_manager import (
     active_workers,
     user_queues,
@@ -54,7 +55,7 @@ class QueueWorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
         async def record_processing(*_args, **kwargs):
             events.append("process")
             process_anchors.append(kwargs["reply_keyboard_anchor"])
-            return len(process_anchors) == 1
+            return False
 
         with patch(
             "services.queue_manager.process_link_for_user",
@@ -67,7 +68,11 @@ class QueueWorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
             [call.args[1] for call in process_link.await_args_list],
             urls,
         )
-        self.assertEqual(process_anchors, [anchor_message, None])
+        self.assertEqual(process_anchors, [anchor_message, anchor_message])
+        self.assertEqual(
+            context.user_data[AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY],
+            anchor_message.message_id,
+        )
         context.bot.send_message.assert_awaited_once()
         anchor = context.bot.send_message.await_args.kwargs
         self.assertEqual(anchor["chat_id"], self.chat_id)
@@ -81,6 +86,21 @@ class QueueWorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(self.chat_id, user_queues)
         self.assertNotIn(self.chat_id, active_workers)
+
+        queue = asyncio.Queue()
+        queue.put_nowait("https://www.aliexpress.com/item/third.html")
+        user_queues[self.chat_id] = queue
+        active_workers.add(self.chat_id)
+        with patch(
+            "services.queue_manager.process_link_for_user",
+            new=AsyncMock(),
+        ) as process_link:
+            await user_queue_worker(self.chat_id, context)
+
+        context.bot.send_message.assert_awaited_once()
+        self.assertIsNone(
+            process_link.await_args.kwargs["reply_keyboard_anchor"]
+        )
 
     async def test_keyboard_anchor_is_not_sent_if_ai_mode_was_reopened(self):
         queue = asyncio.Queue()
@@ -100,7 +120,7 @@ class QueueWorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
 
         context.bot.send_message.assert_not_awaited()
 
-    async def test_anchor_is_reused_until_a_successful_offer_removes_it(self):
+    async def test_anchor_is_reused_for_all_queued_offers(self):
         queue = asyncio.Queue()
         urls = [
             "https://www.aliexpress.com/item/first.html",
@@ -118,11 +138,9 @@ class QueueWorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
             ),
             user_data={},
         )
-        results = iter([False, True, True])
-
         with patch(
             "services.queue_manager.process_link_for_user",
-            new=AsyncMock(side_effect=lambda *_args, **_kwargs: next(results)),
+            new=AsyncMock(return_value=False),
         ) as process_link:
             await user_queue_worker(self.chat_id, context)
 
@@ -131,6 +149,6 @@ class QueueWorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
                 call.kwargs["reply_keyboard_anchor"]
                 for call in process_link.await_args_list
             ],
-            [anchor_message, anchor_message, None],
+            [anchor_message, anchor_message, anchor_message],
         )
         context.bot.send_message.assert_awaited_once()

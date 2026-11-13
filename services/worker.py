@@ -8,6 +8,10 @@ from core.product import get_product_info_from_api
 from core.affiliate import generate_affiliate_links
 from core.db import is_feature_enabled
 from core.scraper import get_product_details_scraping
+from core.mode_state import (
+    AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY,
+    remember_ai_search_reply_keyboard,
+)
 from utils.app_promotion import app_promotion_button
 from handlers.ai_search import ai_search_reply_keyboard, ask_ai_button
 from utils.observability import observed
@@ -19,37 +23,19 @@ async def send_reply_keyboard_anchor(chat_id: int, context):
     """Attach the locally hideable AI keyboard to a durable chat message."""
     if context.user_data.get("ai_search_active"):
         return None
+    if context.user_data.get(AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY):
+        return None
     try:
-        return await context.bot.send_message(
+        anchor = await context.bot.send_message(
             chat_id=chat_id,
             text="\u2063",
             reply_markup=ai_search_reply_keyboard(),
         )
+        remember_ai_search_reply_keyboard(context, anchor)
+        return anchor
     except Exception:
         logger.debug("Could not retain the AI reply keyboard", exc_info=True)
         return None
-
-
-async def _delete_reply_keyboard_anchor(bot, chat_id, anchor_message):
-    """Delete the invisible keyboard anchor after an offer is delivered."""
-    if anchor_message is None:
-        return True
-
-    message_id = getattr(anchor_message, "message_id", None)
-    if not message_id:
-        return False
-    try:
-        await bot.delete_message(
-            chat_id=chat_id,
-            message_id=message_id,
-        )
-        return True
-    except Exception:
-        logger.debug(
-            "Could not remove the AI keyboard anchor after delivering offers",
-            exc_info=True,
-        )
-        return False
 
 
 @observed("product.offer", new_trace=True)
@@ -59,10 +45,9 @@ async def process_link_for_user(
     context,
     reply_keyboard_anchor=None,
 ):
-    """Process one product URL and report whether its keyboard anchor is gone."""
+    """Process one URL without removing its durable keyboard anchor."""
     bot = context.bot
     loading_msg = None
-    anchor_removed = False
 
     try:
         product_id = await asyncio.to_thread(extract_product_id, url)
@@ -158,12 +143,6 @@ async def process_link_for_user(
         else:
             await bot.send_message(chat_id=chat_id, text=response_text, parse_mode="HTML", reply_markup=reply_markup)
 
-        anchor_removed = await _delete_reply_keyboard_anchor(
-            bot,
-            chat_id,
-            reply_keyboard_anchor,
-        )
-
         if sent_photo and getattr(sent_photo, "photo", None):
             product_image_file_ids = context.user_data.setdefault(
                 "product_image_file_ids", {}
@@ -179,7 +158,7 @@ async def process_link_for_user(
             chat_id=chat_id,
             text="❌ حدث خطأ أثناء معالجة طلبك، اتصل بالأدمن @Rabahbelksier",
         )
-        return anchor_removed
+        return False
 
     finally:
         try:
@@ -191,4 +170,4 @@ async def process_link_for_user(
         except Exception:
             pass
 
-    return anchor_removed
+    return False

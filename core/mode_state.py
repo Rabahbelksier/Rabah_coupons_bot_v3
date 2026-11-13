@@ -3,6 +3,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY = "ai_search_reply_keyboard_anchor_id"
+
+
+def remember_ai_search_reply_keyboard(context, message):
+    """Remember a message carrying the normal-mode AI reply keyboard."""
+    user_data = getattr(context, "user_data", None)
+    message_id = getattr(message, "message_id", None)
+    if user_data is not None and isinstance(message_id, int) and message_id > 0:
+        user_data[AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY] = message_id
+
+
+def clear_ai_search_reply_keyboard_anchor(context):
+    user_data = getattr(context, "user_data", None)
+    if user_data is not None:
+        user_data.pop(AI_SEARCH_REPLY_KEYBOARD_ANCHOR_KEY, None)
+
 
 async def delete_smart_cart_prompts(context, state):
     """Delete messages that requested input for an unfinished smart cart."""

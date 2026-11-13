@@ -760,6 +760,7 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_ai_activation_removes_reply_keyboard_before_help_message(self):
         events = []
         context = FakeContext()
+        context.user_data["ai_search_reply_keyboard_anchor_id"] = 90
         context.bot = SimpleNamespace(
             delete_message=AsyncMock(
                 side_effect=lambda **kwargs: events.append(("delete", kwargs))
@@ -783,6 +784,10 @@ class AiSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.replies[1][0], AI_SEARCH_HELP_TEXT)
         self.assertIsInstance(message.replies[1][1], InlineKeyboardMarkup)
         self.assertTrue(context.user_data["ai_search_active"])
+        self.assertNotIn(
+            "ai_search_reply_keyboard_anchor_id",
+            context.user_data,
+        )
 
     async def test_saved_offer_browsing_uses_reply_keyboard_for_navigation(self):
         context = FakeContext()

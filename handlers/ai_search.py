@@ -17,7 +17,11 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from config import AI_USER_REQUEST_TIMEOUT_SECONDS
-from core.mode_state import cancel_smart_cart
+from core.mode_state import (
+    cancel_smart_cart,
+    clear_ai_search_reply_keyboard_anchor,
+    remember_ai_search_reply_keyboard,
+)
 from core.ai import (
     GeminiError,
     _local_parse_user_request,
@@ -231,10 +235,11 @@ async def _reply_to_expired_ai_session(message, context):
     """Replace Telegram's locally retained keyboard without running a search."""
     await cancel_smart_cart(context)
     _clear_ai_search_state(context)
-    await message.reply_text(
+    sent_message = await message.reply_text(
         AI_SEARCH_SESSION_EXPIRED_TEXT,
         reply_markup=ai_search_reply_keyboard(),
     )
+    remember_ai_search_reply_keyboard(context, sent_message)
 
 
 def _saved_offers_main_markup():
@@ -356,6 +361,7 @@ async def _hide_saved_offers_reply_keyboard(message, context):
             "\u2063",
             reply_markup=ReplyKeyboardRemove(),
         )
+        clear_ai_search_reply_keyboard_anchor(context)
         await _delete_message_if_possible(
             removal_message,
             context,
@@ -987,17 +993,19 @@ async def handle_ai_search_message(
         return False
     if not await asyncio.to_thread(is_feature_enabled, "ai_search"):
         _clear_ai_search_state(context)
-        await update.effective_message.reply_text(
+        sent_message = await update.effective_message.reply_text(
             AI_SEARCH_DISABLED_TEXT,
             reply_markup=ai_search_reply_keyboard(),
         )
+        remember_ai_search_reply_keyboard(context, sent_message)
         return True
     if re.search(r"https?://", text, re.IGNORECASE):
         _clear_ai_search_state(context)
-        await update.effective_message.reply_text(
+        sent_message = await update.effective_message.reply_text(
             "⚠️ من فضلك قم بإرسال روابط منتجات Aliexpress فقط ",
             reply_markup=ai_search_reply_keyboard(),
         )
+        remember_ai_search_reply_keyboard(context, sent_message)
         return True
 
     loading_message = await update.effective_message.reply_text(AI_SEARCH_LOADING_TEXT)
@@ -1243,10 +1251,11 @@ async def _navigate_ai_results(update, context, direction):
 
     if not await asyncio.to_thread(is_feature_enabled, "ai_search"):
         _clear_ai_search_state(context)
-        await query.message.reply_text(
+        sent_message = await query.message.reply_text(
             AI_SEARCH_DISABLED_TEXT,
             reply_markup=ai_search_reply_keyboard(),
         )
+        remember_ai_search_reply_keyboard(context, sent_message)
         return
 
     async with _navigation_lock(context):

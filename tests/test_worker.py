@@ -166,7 +166,7 @@ class WorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
             message_id=loading.message_id,
         )
 
-    async def test_photo_offer_deletes_anchor_before_loading_message_cleanup(self):
+    async def test_photo_offer_keeps_anchor_after_loading_message_cleanup(self):
         events = []
         loading = SimpleNamespace(message_id=1)
         anchor = SimpleNamespace(message_id=90)
@@ -213,19 +213,18 @@ class WorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
                 reply_keyboard_anchor=anchor,
             )
 
-        self.assertTrue(anchor_removed)
+        self.assertFalse(anchor_removed)
         bot.send_photo.assert_awaited_once()
         self.assertEqual(
             events,
             [
                 ("send_message", "⏳ جاري البحث عن العروض"),
                 ("send_photo", None),
-                ("delete", anchor.message_id),
                 ("delete", loading.message_id),
             ],
         )
 
-    async def test_text_offer_also_removes_anchor_after_successful_send(self):
+    async def test_text_offer_keeps_anchor_after_successful_send(self):
         events = []
         loading = SimpleNamespace(message_id=1)
         anchor = SimpleNamespace(message_id=90)
@@ -267,20 +266,17 @@ class WorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
                 reply_keyboard_anchor=anchor,
             )
 
-        self.assertTrue(anchor_removed)
+        self.assertFalse(anchor_removed)
         self.assertEqual(
             [event[0] for event in events],
-            ["send_message", "send_message", "delete", "delete"],
+            ["send_message", "send_message", "delete"],
         )
         self.assertEqual(
-            events[2:],
-            [
-                ("delete", anchor.message_id),
-                ("delete", loading.message_id),
-            ],
+            events[2],
+            ("delete", loading.message_id),
         )
 
-    async def test_anchor_delete_failure_does_not_interrupt_offer_delivery(self):
+    async def test_offer_delivery_does_not_try_to_delete_keyboard_anchor(self):
         loading = SimpleNamespace(message_id=1)
         anchor = SimpleNamespace(message_id=90)
 
@@ -322,7 +318,7 @@ class WorkerKeyboardTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(anchor_removed)
         self.assertEqual(bot.send_message.await_count, 2)
-        self.assertEqual(bot.delete_message.await_count, 2)
+        self.assertEqual(bot.delete_message.await_count, 1)
         self.assertEqual(
             bot.delete_message.await_args_list[-1].kwargs["message_id"],
             loading.message_id,

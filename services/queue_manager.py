@@ -21,14 +21,12 @@ async def user_queue_worker(chat_id: int, context):
     try:
         while not queue.empty():
             url = queue.get_nowait()
-            anchor_removed = await process_link_for_user(
+            await process_link_for_user(
                 chat_id,
                 url,
                 context,
                 reply_keyboard_anchor=reply_keyboard_anchor,
             )
-            if anchor_removed:
-                reply_keyboard_anchor = None
             queue.task_done()
     finally:
         active_workers.discard(chat_id)

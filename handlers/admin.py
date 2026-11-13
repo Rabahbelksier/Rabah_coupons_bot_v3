@@ -10,7 +10,10 @@ from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
 from config import AUTO_PUBLISH_CHANNEL_LINK
-from core.mode_state import cancel_smart_cart
+from core.mode_state import (
+    cancel_smart_cart,
+    remember_ai_search_reply_keyboard,
+)
 from core.db import (
     delete_user_chat_ids,
     get_activity_stats,
@@ -1850,10 +1853,11 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_reply_markup(reply_markup=None)
         except Exception:
             logger.debug("Could not remove admin action keyboard", exc_info=True)
-        await query.message.reply_text(
+        sent_message = await query.message.reply_text(
             "تم الخروج من وضع الإدارة.",
             reply_markup=ai_search_reply_keyboard(),
         )
+        remember_ai_search_reply_keyboard(context, sent_message)
         return
 
     if action == "add":
