@@ -263,7 +263,7 @@ def _offer_lines(state, offer, offer_number, total_offers):
     lines = [
         "🛒 <b>عرض السلة الذكية AI</b>",
         f"📦 التجميعة: <b>{offer_number} من {total_offers}</b>",
-        f"💰 السعر النهائي للمنتج الرئيسي: <b>{result['final_price']:.2f}$</b>",
+        f"💰 السعر النهائي: <b>{result['final_price']:.2f}$</b>",
         f"🎟️ الكوبون: <b>{state['coupon']['label']}</b>",
         f"💸 نصيب المنتج الرئيسي من الكوبون: {result['partial_coupon']:.2f}$",
         "➕ أضف منتجك الرئيسي الى السلة",
