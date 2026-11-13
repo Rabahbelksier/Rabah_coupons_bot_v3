@@ -10,23 +10,22 @@ from services import railway_logs
 
 
 class RailwayLogParsingTests(unittest.TestCase):
-    def test_parses_json_lines_and_single_json_document(self):
-        records = railway_logs._parse_cli_output(
-            b'{"timestamp":"one"}\n{"timestamp":"two"}\n'
+    def test_parses_graphql_api_data(self):
+        data = railway_logs._parse_api_response(
+            b'{"data":{"deploymentLogs":[{"timestamp":"one"}]}}'
         )
         self.assertEqual(
-            records,
-            [{"timestamp": "one"}, {"timestamp": "two"}],
+            data,
+            {"deploymentLogs": [{"timestamp": "one"}]},
         )
-        self.assertEqual(
-            railway_logs._parse_cli_output(b'{"timestamp":"single"}'),
-            [{"timestamp": "single"}],
-        )
-        self.assertEqual(railway_logs._parse_cli_output(b" \n"), [])
 
-    def test_rejects_malformed_json_instead_of_silently_dropping_logs(self):
+    def test_rejects_malformed_or_failed_api_response(self):
         with self.assertRaises(railway_logs.RailwayLogsError):
-            railway_logs._parse_cli_output(b'{"valid":true}\nnot-json\n')
+            railway_logs._parse_api_response(b'{"valid":true}\nnot-json\n')
+        with self.assertRaises(railway_logs.RailwayLogsError):
+            railway_logs._parse_api_response(
+                b'{"errors":[{"message":"denied"}]}'
+            )
 
     def test_month_starts_at_midnight_in_algiers(self):
         now = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
@@ -109,17 +108,42 @@ class RailwayLogFetchTests(unittest.TestCase):
             return process
 
         async def create_subprocess(*command, **_kwargs):
-            if "link" in command:
-                return process_for_output(b"")
-            if "deployment" in command:
-                return process_for_output(json.dumps([{
-                    "id": "deployment-current",
-                    "status": "SUCCESS",
-                    "createdAt": deployment_created,
-                }]).encode())
-            return process_for_output(
-                b'{"timestamp":"2026-11-12T10:00:00Z","message":"failure"}\n'
-            )
+            query = command[2]
+            if "Deployments(" in query:
+                response = {
+                    "data": {
+                        "deployments": {
+                            "edges": [{
+                                "cursor": "cursor-one",
+                                "node": {
+                                    "id": "deployment-current",
+                                    "status": "SUCCESS",
+                                    "createdAt": deployment_created,
+                                },
+                            }],
+                            "pageInfo": {
+                                "hasNextPage": False,
+                                "endCursor": "cursor-one",
+                            },
+                        },
+                    },
+                }
+            else:
+                response = {
+                    "data": {
+                        "deploymentLogs": [{
+                            "timestamp": (
+                                datetime.now(timezone.utc)
+                                - timedelta(seconds=1)
+                            )
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                            "message": "failure",
+                            "severity": "error",
+                        }],
+                    },
+                }
+            return process_for_output(json.dumps(response).encode())
 
         patches = self._set_railway_settings()
         with ExitStack() as stack:
@@ -152,16 +176,15 @@ class RailwayLogFetchTests(unittest.TestCase):
             "deployment-current",
         )
         self.assertFalse(log_file.possibly_truncated)
-        self.assertEqual(create_process.await_count, 3)
+        self.assertEqual(create_process.await_count, 2)
         log_command = create_process.await_args.args
         self.assertEqual(log_command[0], "/bin/railway")
-        self.assertEqual(log_command[1], "logs")
-        self.assertEqual(log_command[2], "deployment-current")
-        self.assertIn("--json", log_command)
-        self.assertIn("--since", log_command)
-        self.assertIn("--until", log_command)
-        self.assertIn("--project", log_command)
-        self.assertIn("project-id", log_command)
+        self.assertEqual(log_command[1], "api")
+        self.assertIn("DeploymentLogs(", log_command[2])
+        variables = json.loads(log_command[4])
+        self.assertEqual(variables["deploymentId"], "deployment-current")
+        self.assertEqual(variables["startDate"][-1], "Z")
+        self.assertEqual(variables["endDate"][-1], "Z")
         self.assertNotIn("test-token", log_command)
 
     def test_missing_token_fails_before_starting_cli(self):
@@ -195,13 +218,28 @@ class RailwayLogFetchTests(unittest.TestCase):
             return process
 
         async def create_subprocess(*command, **_kwargs):
-            if "deployment" in command:
-                return process_for_output(json.dumps([{
-                    "id": "deployment-current",
-                    "status": "SUCCESS",
-                    "createdAt": deployment_created,
-                }]).encode())
-            return process_for_output(b"")
+            if "Deployments(" in command[2]:
+                response = {
+                    "data": {
+                        "deployments": {
+                            "edges": [{
+                                "cursor": "cursor-one",
+                                "node": {
+                                    "id": "deployment-current",
+                                    "status": "SUCCESS",
+                                    "createdAt": deployment_created,
+                                },
+                            }],
+                            "pageInfo": {
+                                "hasNextPage": False,
+                                "endCursor": "cursor-one",
+                            },
+                        },
+                    },
+                }
+            else:
+                response = {"data": {"deploymentLogs": []}}
+            return process_for_output(json.dumps(response).encode())
 
         patches = self._set_railway_settings()
         with ExitStack() as stack:

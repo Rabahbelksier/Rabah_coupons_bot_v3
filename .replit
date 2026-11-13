@@ -3,7 +3,7 @@ modules = ["python-3.12", "bash"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["gitFull", "openssl", "playwright-driver", "xcodebuild", "zlib", "railway"]
+packages = ["gitFull", "openssl", "playwright-driver", "xcodebuild", "zlib"]
 
 [unitTest]
 language = "python3"
@@ -40,7 +40,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "bash scripts/run-bot-with-railway-cli.sh"
 
 [[ports]]
 localPort = 5000

@@ -45,8 +45,11 @@ month starts at midnight in Africa/Algiers. Downloads are capped by
 Previously persisted `bot_error_logs` rows are not deleted, but new rows are no
 longer written and the bot no longer creates or queries that table.
 
-The Railway runtime needs the CLI installed and a project-scoped token in
-`RAILWAY_TOKEN`. Configure `RAILWAY_LOGS_PROJECT_ID`,
-`RAILWAY_LOGS_ENVIRONMENT_ID`, and `RAILWAY_LOGS_SERVICE_ID` for the service
-whose logs are downloaded. Optional CLI path, line-limit, and timeout settings
+Log downloads use the Railway CLI's authenticated Public API command, so the
+runtime needs a current Railway CLI with `railway api` support and a
+project-scoped token in `RAILWAY_TOKEN`. Configure
+`RAILWAY_LOGS_PROJECT_ID`, `RAILWAY_LOGS_ENVIRONMENT_ID`, and
+`RAILWAY_LOGS_SERVICE_ID` for the service whose logs are downloaded. The Replit
+workflow installs the current CLI on first start when needed; the Docker image
+installs it during build. Optional CLI path, line-limit, and timeout settings
 have defaults in `config.py`.
