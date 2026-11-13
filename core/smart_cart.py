@@ -512,7 +512,6 @@ async def _show_coupon_choices(message, context):
     ]
     await message.reply_text(
         "🎟️ اختر الكوبون الذي تريد استعماله:",
-        "ان لم تجد الكوبون الذي تريد استعماله تواصل مع الادمن لاضافته @Rabahbelksier",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
