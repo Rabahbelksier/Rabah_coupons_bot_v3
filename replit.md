@@ -44,7 +44,7 @@ Telegram bot that generates affiliate links for AliExpress products. Users send 
 - Smart Cart uses the `coupon_codes` rows where `country = 'dz'` and thresholds exceed the main product price.
 - It guides the user through seller discount, automatic discount, and shipping inputs, then generates every qualifying combination from `cart` in a worker thread.
 - Each combination uses `pricecart` for coupon eligibility, must total from the coupon threshold through threshold + $15, and cannot contain two products with the same `stor`.
-- The first cart row is reserved for the $1 item and may be used in quantities from 1 to 5; all other products can be used once per combination.
+- Cart row `id=1` may be used in quantities from 1 to 5; all other products can be used once per combination.
 - Products may be reused across different combinations. Results are ranked by the main product's partial coupon, with one result shown at a time and a `تجميعة أخرى` button for the remaining results.
 - `cart.pricefinalecart` stores the additional product price after the seller coupon and remains the value used for partial-coupon allocation.
 - The feature requires the existing `DATABASE_URL`; no new credentials are needed.

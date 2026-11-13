@@ -1,6 +1,7 @@
 import os
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 # smart_cart imports the application configuration, which requires these
 # values during module import. Tests use placeholders and never make API calls.
@@ -14,10 +15,72 @@ from core.smart_cart import (
     _get_saved_initial_offer_image,
     _offer_lines,
     calculate_offer,
+    generate_qualifying_combinations,
+    get_cart_products,
 )
 
 
 class SmartCartCalculationTests(unittest.TestCase):
+    def test_only_cart_row_id_one_can_have_multiple_units(self):
+        products = [
+            {
+                "id": 28,
+                "position": 1,
+                "price": Decimal("3"),
+                "final_price": Decimal("3"),
+                "shipping": Decimal("0"),
+                "stor_key": "number:28",
+            },
+            {
+                "id": 1,
+                "position": 2,
+                "price": Decimal("1"),
+                "final_price": Decimal("1"),
+                "shipping": Decimal("0"),
+                "stor_key": "number:1",
+            },
+        ]
+
+        combinations = generate_qualifying_combinations(
+            products,
+            Decimal("4"),
+        )
+
+        self.assertTrue(combinations)
+        for combination in combinations:
+            for item in combination["additions"]:
+                if item["product"]["id"] == 28:
+                    self.assertEqual(item["quantity"], 1)
+                elif item["product"]["id"] == 1:
+                    self.assertGreaterEqual(item["quantity"], 1)
+                    self.assertLessEqual(item["quantity"], 5)
+
+    @patch(
+        "core.smart_cart._query_rows",
+        return_value=[
+            {
+                "id": 28,
+                "linkcart": "https://example.com/28",
+                "pricecart": Decimal("3"),
+                "pricefinalecart": Decimal("2"),
+                "ship": Decimal("0"),
+                "stor": Decimal("28"),
+            },
+            {
+                "id": 1,
+                "linkcart": "https://example.com/1",
+                "pricecart": Decimal("1"),
+                "pricefinalecart": Decimal("1"),
+                "ship": Decimal("0"),
+                "stor": Decimal("1"),
+            },
+        ],
+    )
+    def test_cart_product_loading_preserves_cart_row_ids(self, _query_rows):
+        products = get_cart_products()
+
+        self.assertEqual([product["id"] for product in products], [28, 1])
+
     def test_smart_cart_reuses_initial_offer_image_id(self):
         class Photo:
             file_id = "telegram-file-id"

@@ -42,7 +42,7 @@ def _query_rows(query, params=()):
 
 def get_cart_products():
     rows = _query_rows(
-        "SELECT linkcart, pricecart, pricefinalecart, ship, stor FROM cart "
+        "SELECT id, linkcart, pricecart, pricefinalecart, ship, stor FROM cart "
         "WHERE linkcart IS NOT NULL ORDER BY ctid"
     )
     products = []
@@ -84,6 +84,7 @@ def get_cart_products():
                 )
             shipping = Decimal("0")
         products.append({
+            "id": row["id"],
             "link": row["linkcart"],
             "price": original,
             "final_price": final,
@@ -98,8 +99,8 @@ def get_cart_products():
 def generate_qualifying_combinations(products, required):
     """Generate every valid additional-products combination.
 
-    The first cart row is special: it may be selected with a quantity from
-    one to five. Every other row can be selected once. A product can appear in
+    Cart row id=1 is special: it may be selected with a quantity from one to
+    five. Every other row can be selected once. A product can appear in
     multiple different combinations; the stor constraint applies only inside
     one combination.
     """
@@ -107,7 +108,7 @@ def generate_qualifying_combinations(products, required):
         return []
 
     maximum = required + Decimal("15")
-    fallback = next((product for product in products if product["position"] == 1), None)
+    fallback = next((product for product in products if product.get("id") == 1), None)
     candidates = [product for product in products if product is not fallback]
     combinations = []
 
