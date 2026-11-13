@@ -45,6 +45,8 @@ LOG_PERIODS = {
     },
 }
 MAX_DEPLOYMENTS_TO_LIST = 1000
+DEPLOYMENTS_PAGE_SIZE = 100
+MAX_LOG_LINES_PER_DEPLOYMENT = 5000
 RUNTIME_DEPLOYMENT_STATUSES = {
     "SUCCESS",
     "CRASHED",
@@ -52,6 +54,36 @@ RUNTIME_DEPLOYMENT_STATUSES = {
     "REMOVING",
     "SLEEPING",
 }
+DEPLOYMENTS_QUERY = """
+query Deployments($input: DeploymentListInput!, $first: Int!, $after: String) {
+  deployments(input: $input, first: $first, after: $after) {
+    edges {
+      cursor
+      node { id status createdAt }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+DEPLOYMENT_LOGS_QUERY = """
+query DeploymentLogs(
+  $deploymentId: String!,
+  $limit: Int,
+  $startDate: DateTime,
+  $endDate: DateTime
+) {
+  deploymentLogs(
+    deploymentId: $deploymentId,
+    limit: $limit,
+    startDate: $startDate,
+    endDate: $endDate
+  ) {
+    timestamp
+    message
+    severity
+  }
+}
+"""
 
 
 class RailwayLogsError(RuntimeError):
@@ -99,38 +131,47 @@ def _period_range(period, now=None):
     return format_utc(start), format_utc(end)
 
 
-def _parse_cli_output(stdout):
+def _parse_api_response(stdout):
     text = stdout.decode("utf-8", errors="replace").strip()
     if not text:
-        return []
+        raise RailwayLogsError("Railway Public API returned an empty response.")
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError:
-        records = []
-        try:
-            for line in text.splitlines():
-                if line.strip():
-                    records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise RailwayLogsError(
-                "Railway CLI did not return valid JSON."
-            ) from exc
-        return records
-    if isinstance(parsed, list):
-        return parsed
-    if isinstance(parsed, dict):
-        return [parsed]
-    raise RailwayLogsError("Railway CLI returned an unsupported JSON value.")
+    except json.JSONDecodeError as exc:
+        raise RailwayLogsError(
+            "Railway CLI did not return valid API JSON."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise RailwayLogsError(
+            "Railway Public API returned an unsupported response."
+        )
+    if parsed.get("errors"):
+        raise RailwayLogsError(
+            "Railway Public API rejected the requested log query."
+        )
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        raise RailwayLogsError(
+            "Railway Public API response omitted its data."
+        )
+    return data
 
 
-def _deployment_records(stdout):
-    records = _parse_cli_output(stdout)
-    if len(records) == 1 and isinstance(records[0], dict):
-        for key in ("deployments", "data"):
-            nested = records[0].get(key)
-            if isinstance(nested, list):
-                return nested
-    return records
+def _log_timestamp(record):
+    value = record.get("timestamp") or record.get("createdAt")
+    if not value:
+        raise RailwayLogsError(
+            "Railway Public API log record omitted its timestamp."
+        )
+    try:
+        timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RailwayLogsError(
+            "Railway Public API returned an invalid log timestamp."
+        ) from exc
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc)
 
 
 def _deployment_created_at(deployment):
@@ -247,99 +288,121 @@ async def fetch_railway_log_file(period):
 
     period_settings = LOG_PERIODS[period]
     since, until = _period_range(period)
-    max_lines = RAILWAY_LOGS_MAX_LINES
+    max_lines = min(
+        RAILWAY_LOGS_MAX_LINES,
+        MAX_LOG_LINES_PER_DEPLOYMENT,
+    )
+    possibly_truncated = RAILWAY_LOGS_MAX_LINES > max_lines
     loop = asyncio.get_running_loop()
     deadline = loop.time() + RAILWAY_LOGS_TIMEOUT_SECONDS
     records = []
     queried_deployments = []
-    possibly_truncated = False
 
     with tempfile.TemporaryDirectory(prefix="railway-logs-") as cli_directory:
-        await _run_cli(
-            executable,
-            [
-                "link",
-                "--project",
-                settings["RAILWAY_LOGS_PROJECT_ID"],
-                "--environment",
-                settings["RAILWAY_LOGS_ENVIRONMENT_ID"],
-                "--service",
-                settings["RAILWAY_LOGS_SERVICE_ID"],
-                "--json",
-            ],
-            cli_directory,
-            deadline,
-        )
-        deployment_output = await _run_cli(
-            executable,
-            [
-                "deployment",
-                "list",
-                "--service",
-                settings["RAILWAY_LOGS_SERVICE_ID"],
-                "--environment",
-                settings["RAILWAY_LOGS_ENVIRONMENT_ID"],
-                "--limit",
-                str(MAX_DEPLOYMENTS_TO_LIST),
-                "--json",
-            ],
-            cli_directory,
-            deadline,
-        )
-        deployment_rows = _deployment_records(deployment_output)
         start = datetime.fromisoformat(since.replace("Z", "+00:00"))
         end = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        deployment_rows = []
+        cursor = None
+        has_more_deployments = False
+        while len(deployment_rows) < MAX_DEPLOYMENTS_TO_LIST:
+            page_size = min(
+                DEPLOYMENTS_PAGE_SIZE,
+                MAX_DEPLOYMENTS_TO_LIST - len(deployment_rows),
+            )
+            variables = {
+                "input": {
+                    "projectId": settings["RAILWAY_LOGS_PROJECT_ID"],
+                    "environmentId": settings["RAILWAY_LOGS_ENVIRONMENT_ID"],
+                    "serviceId": settings["RAILWAY_LOGS_SERVICE_ID"],
+                },
+                "first": page_size,
+                "after": cursor,
+            }
+            output = await _run_cli(
+                executable,
+                [
+                    "api",
+                    DEPLOYMENTS_QUERY,
+                    "--variables",
+                    json.dumps(variables),
+                ],
+                cli_directory,
+                deadline,
+            )
+            data = _parse_api_response(output)
+            connection = data.get("deployments")
+            if not isinstance(connection, dict):
+                raise RailwayLogsError(
+                    "Railway Public API omitted the deployment list."
+                )
+            edges = connection.get("edges")
+            page_info = connection.get("pageInfo")
+            if not isinstance(edges, list) or not isinstance(page_info, dict):
+                raise RailwayLogsError(
+                    "Railway Public API returned an invalid deployment page."
+                )
+            for edge in edges:
+                if isinstance(edge, dict) and isinstance(edge.get("node"), dict):
+                    deployment_rows.append(edge["node"])
+            has_more_deployments = bool(page_info.get("hasNextPage"))
+            if not has_more_deployments:
+                break
+            next_cursor = page_info.get("endCursor")
+            if not next_cursor or next_cursor == cursor:
+                raise RailwayLogsError(
+                    "Railway Public API returned an invalid deployment cursor."
+                )
+            cursor = next_cursor
+
+        if has_more_deployments:
+            possibly_truncated = True
+
         deployments = _select_relevant_deployments(
             deployment_rows,
             start,
             end,
         )
-        if (
-            len(deployment_rows) >= MAX_DEPLOYMENTS_TO_LIST
-            and not any(
-                _deployment_created_at(row) < start
-                and str(row.get("status", "")).upper() == "SUCCESS"
-                for row in deployment_rows
-                if isinstance(row, dict)
-            )
-        ):
-            possibly_truncated = True
 
         for _created_at, deployment_id, _status in deployments:
             remaining_lines = max_lines - len(records)
             if remaining_lines <= 0:
                 possibly_truncated = True
                 break
+            variables = {
+                "deploymentId": deployment_id,
+                "limit": min(
+                    remaining_lines,
+                    MAX_LOG_LINES_PER_DEPLOYMENT,
+                ),
+                "startDate": since,
+                "endDate": until,
+            }
             output = await _run_cli(
                 executable,
                 [
-                    "logs",
-                    deployment_id,
-                    "--project",
-                    settings["RAILWAY_LOGS_PROJECT_ID"],
-                    "--environment",
-                    settings["RAILWAY_LOGS_ENVIRONMENT_ID"],
-                    "--service",
-                    settings["RAILWAY_LOGS_SERVICE_ID"],
-                    "--since",
-                    since,
-                    "--until",
-                    until,
-                    "--lines",
-                    str(remaining_lines),
-                    "--json",
+                    "api",
+                    DEPLOYMENT_LOGS_QUERY,
+                    "--variables",
+                    json.dumps(variables),
                 ],
                 cli_directory,
                 deadline,
             )
-            deployment_logs = _parse_cli_output(output)
-            if len(deployment_logs) >= remaining_lines:
+            data = _parse_api_response(output)
+            deployment_logs = data.get("deploymentLogs")
+            if not isinstance(deployment_logs, list):
+                raise RailwayLogsError(
+                    "Railway Public API omitted deployment logs."
+                )
+            if len(deployment_logs) >= variables["limit"]:
                 possibly_truncated = True
             for record in deployment_logs[:remaining_lines]:
                 if isinstance(record, dict):
                     record = dict(record)
                     record.setdefault("deploymentId", deployment_id)
-                records.append(record)
+                    timestamp = _log_timestamp(record)
+                    if start <= timestamp <= end:
+                        records.append(record)
             queried_deployments.append(deployment_id)
 
     records.sort(
