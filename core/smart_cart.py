@@ -267,12 +267,7 @@ def _get_saved_initial_offer_image(context, product_id, message):
 
 def _offer_lines(state, offer, offer_number, total_offers):
     result = offer["result"]
-    price_total_cart = (
-        state["current_price"]
-        + offer["added_original_total"]
-        + state["shipping"]
-        + result.get("extra_shipping_total", Decimal("0"))
-    )
+    price_total_cart = state["current_price"] + offer["added_original_total"]
     price_total_final_cart = result["total_after_discount"]
 
     def main_product_link(link_type):

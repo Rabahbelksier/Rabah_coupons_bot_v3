@@ -204,7 +204,7 @@ class SmartCartCalculationTests(unittest.TestCase):
 
         self.assertEqual(result["extra_shipping_total"], Decimal("6.93"))
 
-    def test_extra_shipping_is_added_to_both_displayed_cart_totals(self):
+    def test_shipping_is_excluded_before_discount_and_included_after(self):
         additions = [
             {
                 "product": {
@@ -236,7 +236,7 @@ class SmartCartCalculationTests(unittest.TestCase):
 
         lines = _offer_lines(state, offer, 1, 1)
 
-        self.assertIn("📦 اجمالي أسعار المنتجات قبل التخفيض: 307.31$", lines)
+        self.assertIn("📦 اجمالي أسعار المنتجات قبل التخفيض: 295.00$", lines)
         self.assertIn("📦 اجمالي أسعار المنتجات بعد التخفيض: 262.31$", lines)
         self.assertEqual(
             lines[:7],
