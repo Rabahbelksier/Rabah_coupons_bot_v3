@@ -5,7 +5,12 @@ import logging
 import math
 from decimal import Decimal, InvalidOperation
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MessageEntity,
+    Update,
+)
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
@@ -37,6 +42,7 @@ from handlers.admin_publishing import (
     handle_manual_publish_callback,
     handle_manual_publish_message,
     manual_publish_channel_id,
+    parse_manual_button,
     publishing_methods_keyboard,
 )
 from handlers.ai_search import (
@@ -63,7 +69,7 @@ ADMIN_CALLBACK_PATTERN = (
     r"(?:gemini|groq|cloudflare|openrouter|deepseek)_"
     r"(?:enable|disable)"
     r"|admin_service_details"
-    r"|admin_broadcast_(?:confirm|cancel)"
+    r"|admin_broadcast_(?:confirm|cancel|button_cancel)"
     r"|admin_cleanup_(?:confirm|cancel)"
     r"|admin_(?:menu|cart|ai|smart|publish|service|queue|activity|broadcast|cleanup|logs|tools|users)"
     r"(?:_(?:enable|disable|report|today|yesterday|thisweek|lastweek|"
@@ -78,6 +84,8 @@ ADMIN_ACCESS_CODE = "Rabah06651024221997"
 ADMIN_CONTACT_TEXT = "تواصل مع الادمن @Rabahbelksier"
 ADMIN_ROW_TEMPLATE = "id | link | pricecart | pricefinalcart | stor | ship"
 TELEGRAM_MESSAGE_LIMIT = 4096
+BROADCAST_CAPTION_LIMIT = 1024
+BROADCAST_BUTTON_LIMIT = 97
 
 
 def admin_cart_back_button():
@@ -241,6 +249,98 @@ def admin_broadcast_confirmation_keyboard():
             callback_data="admin_broadcast_cancel",
         ),
     ]])
+
+
+def admin_broadcast_preview_keyboard(buttons=()):
+    rows = [
+        [InlineKeyboardButton(button["name"], url=button["url"])]
+        for button in buttons
+    ]
+    if len(buttons) < BROADCAST_BUTTON_LIMIT:
+        rows.append([InlineKeyboardButton(
+            "إضافة زر",
+            callback_data="admin_broadcast_addbutton",
+        )])
+    rows.append([
+        InlineKeyboardButton(
+            "تأكيد الإرسال",
+            callback_data="admin_broadcast_confirm",
+        ),
+        InlineKeyboardButton(
+            "إلغاء",
+            callback_data="admin_broadcast_cancel",
+        ),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def _broadcast_entities_for_range(entities, start_units, end_units):
+    sliced = []
+    for entity in entities or ():
+        entity_start = getattr(entity, "offset", None)
+        entity_length = getattr(entity, "length", None)
+        if entity_start is None or entity_length is None:
+            continue
+        overlap_start = max(entity_start, start_units)
+        overlap_end = min(entity_start + entity_length, end_units)
+        if overlap_start >= overlap_end:
+            continue
+        sliced.append(MessageEntity(
+            type=entity.type,
+            offset=overlap_start - start_units,
+            length=overlap_end - overlap_start,
+            url=getattr(entity, "url", None),
+            user=getattr(entity, "user", None),
+            language=getattr(entity, "language", None),
+            custom_emoji_id=getattr(entity, "custom_emoji_id", None),
+            date_time_format=getattr(entity, "date_time_format", None),
+            unix_time=getattr(entity, "unix_time", None),
+            api_kwargs=getattr(entity, "api_kwargs", None),
+        ))
+    return sliced
+
+
+def _split_broadcast_text(text, entities, limit):
+    """Split text by Telegram UTF-16 units and keep overlapping entities."""
+    if not text:
+        return []
+
+    chunks = []
+    start_index = 0
+    start_units = 0
+    current_units = 0
+    total_units = 0
+    for index, character in enumerate(text):
+        character_units = 2 if ord(character) > 0xFFFF else 1
+        if current_units and current_units + character_units > limit:
+            chunks.append((
+                text[start_index:index],
+                _broadcast_entities_for_range(
+                    entities,
+                    start_units,
+                    total_units,
+                ),
+            ))
+            start_index = index
+            start_units = total_units
+            current_units = 0
+        current_units += character_units
+        total_units += character_units
+
+    chunks.append((
+        text[start_index:],
+        _broadcast_entities_for_range(entities, start_units, total_units),
+    ))
+    return chunks
+
+
+def _broadcast_link_markup(buttons):
+    if not buttons:
+        return None
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(button["name"], url=button["url"])]
+        for button in buttons
+    ])
 
 
 def admin_cleanup_confirmation_keyboard():
@@ -1183,49 +1283,112 @@ async def _send_admin_input_prompt(message, action, *, edit=False):
     )
 
 
-async def _send_broadcast_preview(message, text, photo):
-    reply_markup = admin_broadcast_confirmation_keyboard()
+async def _send_broadcast_preview(
+    message,
+    text,
+    photo,
+    entities=None,
+    buttons=(),
+):
+    reply_markup = admin_broadcast_preview_keyboard(buttons)
     copy_message = getattr(message, "copy", None)
     if copy_message is not None:
-        await copy_message(
+        return await copy_message(
             chat_id=message.chat.id,
             reply_markup=reply_markup,
         )
-        return
 
     if photo:
-        await message.reply_photo(
-            photo=photo,
-            caption=text or None,
-            reply_markup=reply_markup,
+        kwargs = {
+            "photo": photo,
+            "caption": text or None,
+            "reply_markup": reply_markup,
+        }
+        if text and entities:
+            kwargs["caption_entities"] = entities
+        return await message.reply_photo(
+            **kwargs,
         )
-    else:
-        await message.reply_text(text, reply_markup=reply_markup)
+    kwargs = {"reply_markup": reply_markup}
+    if entities:
+        kwargs["entities"] = entities
+    return await message.reply_text(text, **kwargs)
 
 
-async def _send_admin_broadcast(bot, text, photo):
+async def _send_admin_broadcast(bot, text, photo, entities=None, buttons=()):
     sent_count = 0
     failed_count = 0
+    link_markup = _broadcast_link_markup(buttons)
+    if photo:
+        caption_chunks = _split_broadcast_text(
+            text,
+            entities,
+            BROADCAST_CAPTION_LIMIT,
+        )
+        caption, caption_entities = (
+            caption_chunks[0] if caption_chunks else ("", [])
+        )
+        remaining_text = text[len(caption):]
+        remaining_units = sum(
+            2 if ord(character) > 0xFFFF else 1
+            for character in caption
+        )
+        total_units = sum(
+            2 if ord(character) > 0xFFFF else 1
+            for character in text
+        )
+        remaining_entities = _broadcast_entities_for_range(
+            entities,
+            remaining_units,
+            total_units,
+        )
+        photo_text_chunks = _split_broadcast_text(
+            remaining_text,
+            remaining_entities,
+            TELEGRAM_MESSAGE_LIMIT,
+        )
+    else:
+        caption = ""
+        caption_entities = []
+        photo_text_chunks = []
+        text_chunks = _split_broadcast_text(
+            text,
+            entities,
+            TELEGRAM_MESSAGE_LIMIT,
+        )
+
     for chat_id in await asyncio.to_thread(get_user_chat_ids):
         try:
             if photo:
-                caption = text[:1024]
-                await bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo,
-                    caption=caption or None,
-                )
-                if len(text) > 1024:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=text[1024:],
-                    )
+                photo_kwargs = {
+                    "chat_id": chat_id,
+                    "photo": photo,
+                    "caption": caption or None,
+                }
+                if link_markup:
+                    photo_kwargs["reply_markup"] = link_markup
+                if caption_entities:
+                    photo_kwargs["caption_entities"] = caption_entities
+                await bot.send_photo(**photo_kwargs)
+                for chunk, chunk_entities in photo_text_chunks:
+                    message_kwargs = {
+                        "chat_id": chat_id,
+                        "text": chunk,
+                    }
+                    if chunk_entities:
+                        message_kwargs["entities"] = chunk_entities
+                    await bot.send_message(**message_kwargs)
             else:
-                for start in range(0, len(text), 4096):
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=text[start:start + 4096],
-                    )
+                for index, (chunk, chunk_entities) in enumerate(text_chunks):
+                    message_kwargs = {
+                        "chat_id": chat_id,
+                        "text": chunk,
+                    }
+                    if chunk_entities:
+                        message_kwargs["entities"] = chunk_entities
+                    if index == 0 and link_markup:
+                        message_kwargs["reply_markup"] = link_markup
+                    await bot.send_message(**message_kwargs)
             sent_count += 1
         except Exception:
             failed_count += 1
@@ -1336,22 +1499,83 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         return True
 
     if state.get("action") == "broadcast":
-        text = (message.text or message.caption or "").strip()
+        is_text_message = message.text is not None
+        text = message.text if is_text_message else (message.caption or "")
+        entities = (
+            getattr(message, "entities", None)
+            if is_text_message
+            else getattr(message, "caption_entities", None)
+        )
         photo = None
         if message.photo:
             photo = message.photo[-1].file_id
-        if not text and not photo:
+        if not text.strip() and not photo:
             await message.reply_text(
                 "أرسل نص الإشعار، أو أرسل صورة مع نص اختياري في الوصف."
             )
             return True
 
-        context.user_data["admin_state"] = {
+        broadcast_state = {
             "action": "broadcast_pending",
             "text": text,
             "photo": photo,
+            "entities": entities or [],
+            "buttons": [],
         }
-        await _send_broadcast_preview(message, text, photo)
+        preview = await _send_broadcast_preview(
+            message,
+            text,
+            photo,
+            entities=entities,
+            buttons=[],
+        )
+        broadcast_state["preview_chat_id"] = message.chat.id
+        broadcast_state["preview_message_id"] = getattr(
+            preview,
+            "message_id",
+            None,
+        )
+        context.user_data["admin_state"] = broadcast_state
+        return True
+
+    if state.get("action") == "broadcast_button_input":
+        try:
+            button = parse_manual_button(message.text)
+        except ValueError as exc:
+            await message.reply_text(
+                f"⚠️ {exc}\nالصيغة المطلوبة: اسم الزر | https://example.com"
+            )
+            return True
+
+        buttons = state.get("buttons", [])
+        if len(buttons) >= BROADCAST_BUTTON_LIMIT:
+            await message.reply_text(
+                f"يمكن إضافة {BROADCAST_BUTTON_LIMIT} زرًا كحد أقصى."
+            )
+            return True
+
+        updated_buttons = [*buttons, button]
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=state["preview_chat_id"],
+                message_id=state["preview_message_id"],
+                reply_markup=admin_broadcast_preview_keyboard(updated_buttons),
+            )
+        except Exception:
+            logger.exception("Could not update the user broadcast preview")
+            await message.reply_text(
+                "تعذر تحديث معاينة الإشعار. أعد إرسال بيانات الزر."
+            )
+            return True
+
+        context.user_data["admin_state"] = {
+            **state,
+            "action": "broadcast_pending",
+            "buttons": updated_buttons,
+        }
+        await message.reply_text(
+            "أُضيف الزر إلى المعاينة. يمكنك إضافة زر آخر أو تأكيد الإرسال."
+        )
         return True
 
     if state.get("action") == "broadcast_pending":
@@ -1440,6 +1664,102 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_manual_publish_callback(query, context)
         return
 
+    if query.data == "admin_broadcast_addbutton":
+        state = context.user_data.get("admin_state") or {}
+        if state.get("action") != "broadcast_pending":
+            await query.answer(
+                "لا توجد معاينة إشعار جاهزة لإضافة زر.",
+                show_alert=True,
+            )
+            return
+        buttons = state.get("buttons", [])
+        if len(buttons) >= BROADCAST_BUTTON_LIMIT:
+            await query.answer(
+                f"يمكن إضافة {BROADCAST_BUTTON_LIMIT} زرًا كحد أقصى.",
+                show_alert=True,
+            )
+            return
+
+        await query.answer()
+        state = {
+            **state,
+            "action": "broadcast_button_input",
+            "preview_chat_id": query.message.chat.id,
+            "preview_message_id": query.message.message_id,
+        }
+        context.user_data["admin_state"] = state
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+            await query.message.reply_text(
+                "أرسل اسم الزر ورابطه بهذا القالب:\n"
+                "اسم الزر | https://example.com",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "إلغاء إضافة الزر",
+                        callback_data="admin_broadcast_button_cancel",
+                    )
+                ]]),
+            )
+        except Exception:
+            logger.exception("Could not open broadcast button input")
+            context.user_data["admin_state"] = {
+                **state,
+                "action": "broadcast_pending",
+            }
+            try:
+                await query.message.edit_reply_markup(
+                    reply_markup=admin_broadcast_preview_keyboard(buttons),
+                )
+            except Exception:
+                logger.exception(
+                    "Could not restore the user broadcast preview"
+                )
+            await query.message.reply_text(
+                "تعذر فتح إدخال الزر. بقي الإشعار محفوظًا في المعاينة."
+            )
+        return
+
+    if query.data == "admin_broadcast_button_cancel":
+        state = context.user_data.get("admin_state") or {}
+        if state.get("action") != "broadcast_button_input":
+            await query.answer(
+                "لا يوجد إدخال زر معلّق.",
+                show_alert=True,
+            )
+            return
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=state["preview_chat_id"],
+                message_id=state["preview_message_id"],
+                reply_markup=admin_broadcast_preview_keyboard(
+                    state.get("buttons", [])
+                ),
+            )
+        except Exception:
+            logger.exception("Could not restore the user broadcast preview")
+            await query.answer(
+                "تعذر استعادة المعاينة. أعد المحاولة.",
+                show_alert=True,
+            )
+            return
+
+        context.user_data["admin_state"] = {
+            **state,
+            "action": "broadcast_pending",
+        }
+        await query.answer()
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug(
+                "Could not remove broadcast button prompt controls",
+                exc_info=True,
+            )
+        await query.message.reply_text(
+            "تم إلغاء إضافة الزر. بقي الإشعار محفوظًا في المعاينة."
+        )
+        return
+
     if query.data == "admin_broadcast_cancel":
         await query.answer()
         context.user_data.pop("admin_state", None)
@@ -1478,6 +1798,8 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.bot,
             state.get("text", ""),
             state.get("photo"),
+            entities=state.get("entities"),
+            buttons=state.get("buttons", []),
         )
         context.user_data.pop("admin_state", None)
         await query.message.reply_text(

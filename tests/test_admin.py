@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 for name in ("APP_KEY", "APP_SECRET", "TRACKING_ID", "TELEGRAM_TOKEN"):
     os.environ.setdefault(name, "test")
 
-from telegram import ReplyKeyboardMarkup
+from telegram import MessageEntity, ReplyKeyboardMarkup
 
 from handlers.admin import (
     ADMIN_CALLBACK_PATTERN,
@@ -22,9 +22,11 @@ from handlers.admin import (
     _cleanup_report_text,
     _render_admin_report_sections,
     _scan_inaccessible_users,
+    _split_broadcast_text,
     admin_callback,
     admin_actions_keyboard,
     admin_broadcast_confirmation_keyboard,
+    admin_broadcast_preview_keyboard,
     admin_cleanup_confirmation_keyboard,
     admin_command,
     admin_menu_keyboard,
@@ -1320,6 +1322,8 @@ class AdminCartTests(unittest.TestCase):
         for callback in (
             "admin_broadcast_confirm",
             "admin_broadcast_cancel",
+            "admin_broadcast_addbutton",
+            "admin_broadcast_button_cancel",
         ):
             with self.subTest(callback=callback):
                 self.assertIsNotNone(
@@ -1564,6 +1568,7 @@ class AdminCartTests(unittest.TestCase):
         )
 
     def test_broadcast_submission_previews_without_sending(self):
+        entity = MessageEntity("bold", offset=0, length=6)
         context = SimpleNamespace(
             user_data={
                 "admin_mode": True,
@@ -1577,9 +1582,11 @@ class AdminCartTests(unittest.TestCase):
         message = SimpleNamespace(
             text="إشعار تجريبي",
             caption=None,
+            entities=[entity],
+            caption_entities=None,
             photo=[],
             chat=SimpleNamespace(id=123),
-            copy=AsyncMock(),
+            copy=AsyncMock(return_value=SimpleNamespace(message_id=777)),
             reply_text=AsyncMock(),
         )
 
@@ -1602,15 +1609,113 @@ class AdminCartTests(unittest.TestCase):
                 for row in preview_markup.inline_keyboard
                 for button in row
             ],
-            ["admin_broadcast_confirm", "admin_broadcast_cancel"],
+            [
+                "admin_broadcast_addbutton",
+                "admin_broadcast_confirm",
+                "admin_broadcast_cancel",
+            ],
+        )
+        state = context.user_data["admin_state"]
+        self.assertEqual(state["action"], "broadcast_pending")
+        self.assertEqual(state["text"], "إشعار تجريبي")
+        self.assertEqual(state["photo"], None)
+        self.assertEqual(state["entities"], [entity])
+        self.assertEqual(state["buttons"], [])
+        self.assertEqual(state["preview_message_id"], 777)
+
+    def test_broadcast_preview_keyboard_shows_link_buttons_and_controls(self):
+        keyboard = admin_broadcast_preview_keyboard([
+            {"name": "افتح العرض", "url": "https://example.com"},
+        ])
+
+        self.assertEqual(
+            keyboard.inline_keyboard[0][0].url,
+            "https://example.com",
         )
         self.assertEqual(
-            context.user_data["admin_state"],
-            {
-                "action": "broadcast_pending",
-                "text": "إشعار تجريبي",
-                "photo": None,
+            [
+                button.callback_data
+                for row in keyboard.inline_keyboard[1:]
+                for button in row
+            ],
+            [
+                "admin_broadcast_addbutton",
+                "admin_broadcast_confirm",
+                "admin_broadcast_cancel",
+            ],
+        )
+
+    def test_broadcast_text_splitting_preserves_utf16_entity_offsets(self):
+        text = "😀" * 2049
+        entity = MessageEntity("bold", offset=4096, length=2)
+
+        chunks = _split_broadcast_text(text, [entity], 4096)
+
+        self.assertEqual([len(chunk[0]) for chunk in chunks], [2048, 1])
+        self.assertEqual(chunks[0][1], [])
+        self.assertEqual(
+            [
+                (item.offset, item.length)
+                for item in chunks[1][1]
+            ],
+            [(0, 2)],
+        )
+
+    def test_broadcast_can_add_a_link_button_before_confirmation(self):
+        context = SimpleNamespace(
+            user_data={
+                "admin_mode": True,
+                "admin_state": {
+                    "action": "broadcast_pending",
+                    "text": "إشعار",
+                    "photo": None,
+                    "entities": [MessageEntity("bold", offset=0, length=6)],
+                    "buttons": [],
+                    "preview_chat_id": 123,
+                    "preview_message_id": 777,
+                },
             },
+            bot=SimpleNamespace(edit_message_reply_markup=AsyncMock()),
+        )
+        preview = SimpleNamespace(
+            chat=SimpleNamespace(id=123),
+            message_id=777,
+            edit_reply_markup=AsyncMock(),
+            reply_text=AsyncMock(),
+        )
+        query = SimpleNamespace(
+            data="admin_broadcast_addbutton",
+            answer=AsyncMock(),
+            message=preview,
+        )
+        import asyncio
+
+        async def add_button():
+            await admin_callback(
+                SimpleNamespace(callback_query=query),
+                context,
+            )
+            message = SimpleNamespace(
+                text="افتح العرض | https://example.com",
+                caption=None,
+                photo=[],
+                reply_text=AsyncMock(),
+            )
+            await handle_admin_message(SimpleNamespace(message=message), context)
+
+        asyncio.run(add_button())
+
+        state = context.user_data["admin_state"]
+        self.assertEqual(state["action"], "broadcast_pending")
+        self.assertEqual(
+            state["buttons"],
+            [{"name": "افتح العرض", "url": "https://example.com"}],
+        )
+        self.assertEqual(
+            context.bot.edit_message_reply_markup.await_args.kwargs[
+                "reply_markup"
+            ].inline_keyboard[0][0].url,
+            "https://example.com",
         )
 
     def test_broadcast_cancel_returns_to_admin_menu_without_sending(self):
@@ -1658,6 +1763,7 @@ class AdminCartTests(unittest.TestCase):
         get_chat_ids,
     ):
         text = "x" * 4097
+        entity = MessageEntity("bold", offset=4094, length=3)
         context = SimpleNamespace(
             user_data={
                 "admin_mode": True,
@@ -1665,6 +1771,10 @@ class AdminCartTests(unittest.TestCase):
                     "action": "broadcast_pending",
                     "text": text,
                     "photo": None,
+                    "entities": [entity],
+                    "buttons": [
+                        {"name": "افتح العرض", "url": "https://example.com"}
+                    ],
                 },
             },
             bot=SimpleNamespace(send_message=AsyncMock()),
@@ -1693,6 +1803,20 @@ class AdminCartTests(unittest.TestCase):
              context.bot.send_message.await_args_list],
             [4096, 1, 4096, 1],
         )
+        calls = context.bot.send_message.await_args_list
+        self.assertEqual(
+            [(item.offset, item.length) for item in calls[0].kwargs["entities"]],
+            [(4094, 2)],
+        )
+        self.assertEqual(
+            [(item.offset, item.length) for item in calls[1].kwargs["entities"]],
+            [(0, 1)],
+        )
+        self.assertEqual(
+            calls[0].kwargs["reply_markup"].inline_keyboard[0][0].url,
+            "https://example.com",
+        )
+        self.assertNotIn("reply_markup", calls[1].kwargs)
         self.assertIn(
             "تم إرسال الإشعار إلى 2 مستخدم، وتعذر الإرسال إلى 0 مستخدم.",
             message.reply_text.await_args.args[0],
@@ -1705,6 +1829,7 @@ class AdminCartTests(unittest.TestCase):
         get_chat_ids,
     ):
         text = "x" * 1025
+        entity = MessageEntity("bold", offset=1022, length=3)
         context = SimpleNamespace(
             user_data={
                 "admin_mode": True,
@@ -1712,6 +1837,10 @@ class AdminCartTests(unittest.TestCase):
                     "action": "broadcast_pending",
                     "text": text,
                     "photo": "photo-file-id",
+                    "entities": [entity],
+                    "buttons": [
+                        {"name": "افتح العرض", "url": "https://example.com"}
+                    ],
                 },
             },
             bot=SimpleNamespace(
@@ -1745,9 +1874,25 @@ class AdminCartTests(unittest.TestCase):
             context.bot.send_photo.await_args_list[0].kwargs["caption"],
             text[:1024],
         )
+        self.assertEqual(
+            [
+                (item.offset, item.length)
+                for item in context.bot.send_photo.await_args_list[
+                    0
+                ].kwargs["caption_entities"]
+            ],
+            [(1022, 2)],
+        )
+        self.assertEqual(
+            context.bot.send_photo.await_args_list[0].kwargs[
+                "reply_markup"
+            ].inline_keyboard[0][0].url,
+            "https://example.com",
+        )
         context.bot.send_message.assert_awaited_once_with(
             chat_id=101,
             text=text[1024:],
+            entities=[MessageEntity("bold", offset=0, length=1)],
         )
         self.assertIn(
             "تم إرسال الإشعار إلى 1 مستخدم، وتعذر الإرسال إلى 1 مستخدم.",
