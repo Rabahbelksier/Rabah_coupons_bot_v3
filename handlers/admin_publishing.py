@@ -105,10 +105,12 @@ async def _render_manual_preview(bot, state):
     chat_id = state["preview_chat_id"]
     message_id = state["preview_message_id"]
     if state.get("photo"):
+        caption_entities = state.get("entities") or None
         await bot.edit_message_caption(
             chat_id=chat_id,
             message_id=message_id,
             caption=state.get("text") or "",
+            caption_entities=caption_entities,
             reply_markup=reply_markup,
         )
     else:
@@ -116,6 +118,7 @@ async def _render_manual_preview(bot, state):
             chat_id=chat_id,
             message_id=message_id,
             text=state["text"],
+            entities=state.get("entities") or None,
             reply_markup=reply_markup,
         )
 
@@ -138,9 +141,15 @@ async def _render_button_input_prompt(bot, state):
 
 
 async def _handle_manual_post_message(message, context, state):
-    text = (message.text or message.caption or "").strip()
+    is_text_message = message.text is not None
+    text = message.text if is_text_message else (message.caption or "")
+    entities = (
+        getattr(message, "entities", None)
+        if is_text_message
+        else getattr(message, "caption_entities", None)
+    )
     photo = message.photo[-1].file_id if message.photo else None
-    if not text and not photo:
+    if not text.strip() and not photo:
         await message.reply_text("أرسل نص المنشور أو صورة، ويمكن إضافة نص للصورة.")
         return
 
@@ -162,17 +171,23 @@ async def _handle_manual_post_message(message, context, state):
         "action": MANUAL_PUBLISH_READY,
         "text": text,
         "photo": photo,
+        "entities": entities or [],
         "buttons": [],
     }
     reply_markup = manual_publish_preview_keyboard([])
 
     try:
         if photo:
+            send_photo_kwargs = {
+                "chat_id": state["prompt_chat_id"],
+                "photo": photo,
+                "caption": text or None,
+                "reply_markup": reply_markup,
+            }
+            if text and entities:
+                send_photo_kwargs["caption_entities"] = entities
             preview = await context.bot.send_photo(
-                chat_id=state["prompt_chat_id"],
-                photo=photo,
-                caption=text or None,
-                reply_markup=reply_markup,
+                **send_photo_kwargs,
             )
             preview_state.update({
                 "preview_chat_id": state["prompt_chat_id"],
@@ -189,11 +204,19 @@ async def _handle_manual_post_message(message, context, state):
                     exc_info=True,
                 )
         else:
+            send_message_kwargs = {
+                "chat_id": state["prompt_chat_id"],
+                "text": text,
+                "reply_markup": reply_markup,
+            }
+            if entities:
+                send_message_kwargs["entities"] = entities
             try:
                 await context.bot.edit_message_text(
                     chat_id=state["prompt_chat_id"],
                     message_id=state["prompt_message_id"],
                     text=text,
+                    entities=entities or None,
                     reply_markup=reply_markup,
                 )
                 preview_chat_id = state["prompt_chat_id"]
@@ -204,9 +227,7 @@ async def _handle_manual_post_message(message, context, state):
                     exc_info=True,
                 )
                 preview = await context.bot.send_message(
-                    chat_id=state["prompt_chat_id"],
-                    text=text,
-                    reply_markup=reply_markup,
+                    **send_message_kwargs,
                 )
                 preview_chat_id = state["prompt_chat_id"]
                 preview_message_id = preview.message_id
@@ -309,17 +330,27 @@ async def _send_manual_post(query, context, state):
     )
     try:
         if state.get("photo"):
+            send_photo_kwargs = {
+                "chat_id": target_chat_id,
+                "photo": state["photo"],
+                "caption": state.get("text") or None,
+                "reply_markup": reply_markup,
+            }
+            if state.get("text") and state.get("entities"):
+                send_photo_kwargs["caption_entities"] = state["entities"]
             await context.bot.send_photo(
-                chat_id=target_chat_id,
-                photo=state["photo"],
-                caption=state.get("text") or None,
-                reply_markup=reply_markup,
+                **send_photo_kwargs,
             )
         else:
+            send_message_kwargs = {
+                "chat_id": target_chat_id,
+                "text": state["text"],
+                "reply_markup": reply_markup,
+            }
+            if state.get("entities"):
+                send_message_kwargs["entities"] = state["entities"]
             await context.bot.send_message(
-                chat_id=target_chat_id,
-                text=state["text"],
-                reply_markup=reply_markup,
+                **send_message_kwargs,
             )
     except Exception:
         logger.exception("Could not send the manual post to its channel")

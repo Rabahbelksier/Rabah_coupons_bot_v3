@@ -632,6 +632,8 @@ class AdminCartTests(unittest.TestCase):
         )
 
     def test_manual_text_post_becomes_preview_without_channel_send(self):
+        entity = SimpleNamespace(type="bold", offset=2, length=6)
+        post_text = "  تنسيق المنشور  "
         context = SimpleNamespace(
             user_data={"admin_mode": True, "admin_state": {
                 "action": "manual_publish_waiting",
@@ -646,8 +648,9 @@ class AdminCartTests(unittest.TestCase):
             ),
         )
         message = SimpleNamespace(
-            text="منشور تجريبي",
+            text=post_text,
             caption=None,
+            entities=[entity],
             photo=[],
             reply_text=AsyncMock(),
         )
@@ -662,16 +665,29 @@ class AdminCartTests(unittest.TestCase):
         context.bot.edit_message_text.assert_awaited_once()
         self.assertEqual(
             context.bot.edit_message_text.await_args.kwargs["text"],
-            "منشور تجريبي",
+            post_text,
+        )
+        self.assertEqual(
+            context.bot.edit_message_text.await_args.kwargs["entities"],
+            [entity],
         )
         self.assertEqual(
             context.user_data["admin_state"]["action"],
             "manual_publish_ready",
         )
+        self.assertEqual(
+            context.user_data["admin_state"]["text"],
+            post_text,
+        )
+        self.assertEqual(
+            context.user_data["admin_state"]["entities"],
+            [entity],
+        )
         context.bot.send_message.assert_not_awaited()
         context.bot.send_photo.assert_not_awaited()
 
     def test_manual_photo_post_previews_caption_and_removes_prompt(self):
+        entity = SimpleNamespace(type="text_link", offset=0, length=4, url="https://example.com")
         context = SimpleNamespace(
             user_data={"admin_mode": True, "admin_state": {
                 "action": "manual_publish_waiting",
@@ -691,6 +707,7 @@ class AdminCartTests(unittest.TestCase):
         message = SimpleNamespace(
             text=None,
             caption="نص الصورة",
+            caption_entities=[entity],
             photo=[SimpleNamespace(file_id="photo-id")],
             reply_text=AsyncMock(),
         )
@@ -706,6 +723,10 @@ class AdminCartTests(unittest.TestCase):
             context.bot.send_photo.await_args.kwargs["caption"],
             "نص الصورة",
         )
+        self.assertEqual(
+            context.bot.send_photo.await_args.kwargs["caption_entities"],
+            [entity],
+        )
         context.bot.delete_message.assert_awaited_once_with(
             chat_id=123,
             message_id=10,
@@ -715,6 +736,7 @@ class AdminCartTests(unittest.TestCase):
         self.assertEqual(state["photo"], "photo-id")
 
     def test_manual_button_input_returns_to_the_updated_preview(self):
+        entity = SimpleNamespace(type="bold", offset=0, length=6)
         context = SimpleNamespace(
             user_data={"admin_state": {
                 "action": "manual_publish_ready",
@@ -722,6 +744,7 @@ class AdminCartTests(unittest.TestCase):
                 "preview_message_id": 77,
                 "photo": None,
                 "text": "منشور",
+                "entities": [entity],
                 "buttons": [],
             }},
             bot=SimpleNamespace(
@@ -767,8 +790,13 @@ class AdminCartTests(unittest.TestCase):
             .inline_keyboard[0][0].url,
             "https://example.com",
         )
+        self.assertEqual(
+            context.bot.edit_message_text.await_args.kwargs["entities"],
+            [entity],
+        )
 
     def test_manual_photo_send_preserves_caption_and_custom_button_only(self):
+        entity = SimpleNamespace(type="bold", offset=0, length=5)
         context = SimpleNamespace(
             user_data={
                 "admin_state": {
@@ -777,6 +805,7 @@ class AdminCartTests(unittest.TestCase):
                     "preview_message_id": 77,
                     "photo": "photo-id",
                     "text": "وصف الصورة",
+                    "entities": [entity],
                     "buttons": [{"name": "الرابط", "url": "https://example.com"}],
                 },
             },
@@ -806,6 +835,7 @@ class AdminCartTests(unittest.TestCase):
         sent = context.bot.send_photo.await_args.kwargs
         self.assertEqual(sent["photo"], "photo-id")
         self.assertEqual(sent["caption"], "وصف الصورة")
+        self.assertEqual(sent["caption_entities"], [entity])
         self.assertEqual(
             sent["reply_markup"].inline_keyboard[0][0].url,
             "https://example.com",
@@ -816,6 +846,7 @@ class AdminCartTests(unittest.TestCase):
         context.bot.send_message.assert_not_awaited()
 
     def test_manual_publish_callback_sends_only_custom_markup_and_clears_state(self):
+        entity = SimpleNamespace(type="text_link", offset=0, length=5, url="https://example.com")
         context = SimpleNamespace(
             user_data={
                 "admin_mode": True,
@@ -825,6 +856,7 @@ class AdminCartTests(unittest.TestCase):
                     "preview_message_id": 77,
                     "photo": None,
                     "text": "نص المنشور",
+                    "entities": [entity],
                     "buttons": [{"name": "الرابط", "url": "https://example.com"}],
                 },
             },
@@ -855,6 +887,7 @@ class AdminCartTests(unittest.TestCase):
         sent = context.bot.send_message.await_args.kwargs
         self.assertEqual(sent["chat_id"], "@deals_channel")
         self.assertEqual(sent["text"], "نص المنشور")
+        self.assertEqual(sent["entities"], [entity])
         channel_buttons = sent["reply_markup"].inline_keyboard
         self.assertEqual(
             [[button.text for button in row] for row in channel_buttons],
